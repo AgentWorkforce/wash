@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'fixtures/**'
+      - 'test/**'
+      - 'package.json'
+      - 'build/**'
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build (verifies entry loads)
+        run: node build/build.mjs
+      - name: Run tests
+        run: node --test --test-reporter=spec test/
+
+  burn-compare:
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'tools') || github.event.pull_request.changed_files > 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Run burn compare
+        run: node scripts/burn-compare.js compare-result.json
+      - name: Comment delta on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('compare-result.json', 'utf8'));
+            const ratio = data.ratio;
+            const body = [
+              '### relaywash burn-compare',
+              '',
+              `replacement bytes: **${data.totals.replacementBytes}**`,
+              `vanilla bytes:     **${data.totals.vanillaBytes}**`,
+              `ratio: **${ratio}** (lower is better)`,
+              '',
+              `Per-fixture: ${data.fixtures.length}`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

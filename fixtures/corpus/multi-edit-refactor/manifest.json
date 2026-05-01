@@ -1,0 +1,16 @@
+{
+  "name": "multi-edit-refactor",
+  "description": "Locate then read three files affected by a refactor.",
+  "steps": [
+    {
+      "name": "find-callsites",
+      "tool": "Search",
+      "args": { "symbol": "computeTotal" }
+    },
+    {
+      "name": "read-engine",
+      "tool": "Read",
+      "args": { "path": "../find-and-read/src/billing.ts", "mode": "signatures" }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "wash-marketplace",
+  "owner": {
+    "name": "AgentWorkforce",
+    "url": "https://github.com/AgentWorkforce"
+  },
+  "plugins": [
+    {
+      "name": "relaywash",
+      "source": ".",
+      "description": "Clean agent tool output, lower token burn.",
+      "version": "0.1.0",
+      "category": "productivity",
+      "license": "MIT"
+    }
+  ]
+}
