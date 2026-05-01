@@ -12,7 +12,7 @@ truncated diffs instead.
 
 ```
 /plugin marketplace add AgentWorkforce/wash
-/plugin install relaywash@wash-marketplace
+/plugin install relaywash@agentworkforce
 ```
 
 That's it. relaywash takes effect on the next session: the active agent has built-in file
