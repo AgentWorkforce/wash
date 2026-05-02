@@ -1,0 +1,51 @@
+{
+  "name": "large-codebase",
+  "description": "Realistic find-and-read on a 2500+ line module. Each replacement step lists the explicit vanilla calls it collapses, so byte counts compare 1:N (relaywash) against the actual sequence vanilla Claude Code would have made.",
+  "steps": [
+    {
+      "name": "find-symbol",
+      "tool": "Search",
+      "args": { "symbol": "computeTotal" },
+      "vanilla": [
+        { "type": "glob", "pattern": "**/*.ts" },
+        { "type": "grep", "pattern": "computeTotal" }
+      ]
+    },
+    {
+      "name": "read-engine",
+      "tool": "Read",
+      "args": { "path": "src/billing-engine.ts", "mode": "signatures" },
+      "vanilla": [
+        { "type": "read", "path": "src/billing-engine.ts" }
+      ]
+    },
+    {
+      "name": "explore-helpers",
+      "tool": "Search",
+      "args": { "symbol": "formatCurrency" },
+      "vanilla": [
+        { "type": "glob", "pattern": "**/*.ts" },
+        { "type": "grep", "pattern": "formatCurrency" }
+      ]
+    },
+    {
+      "name": "drill-into-callsite",
+      "tool": "Read",
+      "args": { "path": "src/billing-engine.ts", "mode": "range", "range": [1, 50] },
+      "vanilla": [
+        { "type": "read", "path": "src/billing-engine.ts" }
+      ]
+    },
+    {
+      "name": "find-and-read-3-files",
+      "tool": "Search",
+      "args": { "symbol": "Logger" },
+      "vanilla": [
+        { "type": "glob", "pattern": "**/*.ts" },
+        { "type": "grep", "pattern": "Logger" },
+        { "type": "read", "path": "src/billing-engine.ts" },
+        { "type": "read", "path": "src/log.ts" }
+      ]
+    }
+  ]
+}

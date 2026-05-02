@@ -1,16 +1,23 @@
 {
   "name": "find-and-read",
-  "description": "Find a symbol across the source tree and read the file containing it.",
+  "description": "Find a symbol across the source tree and read the file containing it. Vanilla path is glob+grep+read; relaywash collapses to one Search + one Read.",
   "steps": [
     {
       "name": "search-symbol",
       "tool": "Search",
-      "args": { "symbol": "computeTotal", "contextLines": 2 }
+      "args": { "symbol": "computeTotal", "contextLines": 2 },
+      "vanilla": [
+        { "type": "glob", "pattern": "**/*.ts" },
+        { "type": "grep", "pattern": "computeTotal" }
+      ]
     },
     {
       "name": "read-target",
       "tool": "Read",
-      "args": { "path": "src/billing.ts", "mode": "signatures" }
+      "args": { "path": "src/billing.ts", "mode": "signatures" },
+      "vanilla": [
+        { "type": "read", "path": "src/billing.ts" }
+      ]
     }
   ]
 }
