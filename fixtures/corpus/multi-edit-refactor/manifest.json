@@ -1,0 +1,23 @@
+{
+  "name": "multi-edit-refactor",
+  "description": "Pre-edit reconnaissance: locate all callsites of a symbol, then read three affected files. Vanilla path is glob+grep+3xread; relaywash collapses the search and the reads.",
+  "steps": [
+    {
+      "name": "find-callsites",
+      "tool": "Search",
+      "args": { "symbol": "computeTotal" },
+      "vanilla": [
+        { "type": "glob", "pattern": "**/*.ts" },
+        { "type": "grep", "pattern": "computeTotal" }
+      ]
+    },
+    {
+      "name": "read-engine",
+      "tool": "Read",
+      "args": { "path": "../find-and-read/src/billing.ts", "mode": "signatures" },
+      "vanilla": [
+        { "type": "read", "path": "../find-and-read/src/billing.ts" }
+      ]
+    }
+  ]
+}

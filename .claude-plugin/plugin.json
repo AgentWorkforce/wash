@@ -1,0 +1,8 @@
+{
+  "name": "relaywash",
+  "version": "0.1.0",
+  "description": "Clean agent tool output, lower token burn. Replaces Claude Code's built-in file/shell tools with structured equivalents.",
+  "homepage": "https://github.com/AgentWorkforce/wash",
+  "license": "MIT",
+  "author": "AgentWorkforce"
+}
