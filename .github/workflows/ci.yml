@@ -42,6 +42,10 @@ jobs:
       - name: Run burn compare
         run: node scripts/burn-compare.js compare-result.json
       - name: Comment delta on PR
+        # Comment posting is a courtesy. Don't fail the job if GitHub API hiccups —
+        # the burn-compare RUN step above is the actual signal.
+        continue-on-error: true
+        timeout-minutes: 2
         uses: actions/github-script@v7
         with:
           script: |
