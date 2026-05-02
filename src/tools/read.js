@@ -9,8 +9,23 @@ import { meta } from '../burn/meta.js';
 const SMALL_FILE_LINES = 200;
 const SMALL_FUNCTION_LINES = 20;
 
-/** @type {Map<string, { path: string; mtime: number }>} */
-const sessionMtimeCache = new Map();
+/**
+ * Per-session mtime cache. Outer key = sessionId, inner key = absolute path.
+ * Scoped by session so concurrent or sequential MCP sessions can't leak "unchanged"
+ * suppression into each other.
+ * @type {Map<string, Map<string, { mtime: number }>>}
+ */
+const sessionMtimeCaches = new Map();
+
+function cacheFor(sessionId) {
+  const key = sessionId || 'default';
+  let m = sessionMtimeCaches.get(key);
+  if (!m) {
+    m = new Map();
+    sessionMtimeCaches.set(key, m);
+  }
+  return m;
+}
 
 /** Most-recent search query per session (set by the Search tool). */
 let lastSearchSymbol = null;
@@ -20,7 +35,7 @@ export function noteSearchedSymbol(sym) {
 }
 
 export function _resetReadCache() {
-  sessionMtimeCache.clear();
+  sessionMtimeCaches.clear();
   lastSearchSymbol = null;
 }
 
@@ -44,15 +59,16 @@ export const readTool = {
     required: ['path'],
     additionalProperties: false,
   },
-  handler(args) {
-    return runRead(args || {});
+  handler(args, ctx) {
+    return runRead(args || {}, ctx || {});
   },
 };
 
-export function runRead({ path, mode, range }) {
+export function runRead({ path, mode, range }, ctx = {}) {
   const language = detectLanguage(path);
   const stat = statSync(path);
-  const cached = sessionMtimeCache.get(path);
+  const cache = cacheFor(ctx.sessionId);
+  const cached = cache.get(path);
   const unchanged = cached && cached.mtime === stat.mtimeMs;
 
   if (unchanged && !range) {
@@ -65,7 +81,7 @@ export function runRead({ path, mode, range }) {
   }
 
   const text = readFileSync(path, 'utf8');
-  sessionMtimeCache.set(path, { path, mtime: stat.mtimeMs });
+  cache.set(path, { mtime: stat.mtimeMs });
 
   if (mode === 'range' || range) {
     if (!range || range.length !== 2) {

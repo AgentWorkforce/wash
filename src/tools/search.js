@@ -56,7 +56,7 @@ export function runSearch(args) {
     ? scanContent({ cwd, pattern, paths, contextLines })
     : scanGlobOnly({ cwd, paths });
 
-  const ranked = rankResults(fileMatches, rank);
+  const ranked = rankResults(fileMatches, rank, cwd);
   const truncated = ranked.length > maxResults;
   const results = ranked.slice(0, maxResults);
 
@@ -331,7 +331,7 @@ export function globToRegex(glob) {
   return new RegExp('^(?:.*/)?' + re + '(?:/.*)?$');
 }
 
-function rankResults(results, mode) {
+function rankResults(results, mode, cwd) {
   if (mode === 'matches') {
     return [...results].sort((a, b) => b.matchCount - a.matchCount || a.path.localeCompare(b.path));
   }
@@ -339,7 +339,8 @@ function rankResults(results, mode) {
     const withMtime = results.map((r) => {
       let mtime = 0;
       try {
-        mtime = statSync(resolve(r.path)).mtimeMs;
+        // r.path is relative to the search cwd; resolve against cwd, not process.cwd().
+        mtime = statSync(resolve(cwd || process.cwd(), r.path)).mtimeMs;
       } catch {}
       return { r, mtime };
     });

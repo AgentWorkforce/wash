@@ -59,6 +59,20 @@ test('Read: range mode returns the requested slice', () => {
   assert.equal(lines[0], 'import { x } from "y";');
 });
 
+test('Read: mtime cache is scoped per session', () => {
+  _resetReadCache();
+  const path = bigTsFile();
+  // Session A reads — populates A's cache.
+  runRead({ path, mode: 'signatures' }, { sessionId: 'A' });
+  // Session B reads the same file for the first time — must NOT get the empty-content
+  // optimization, because B never read it.
+  const r = runRead({ path, mode: 'signatures' }, { sessionId: 'B' });
+  assert(r.content.length > 0, 'session B should get full response on first read');
+  // Session A re-reading still gets the empty-content optimization.
+  const rA = runRead({ path, mode: 'signatures' }, { sessionId: 'A' });
+  assert.equal(rA.content, '');
+});
+
 test('Read: searched symbol heuristic keeps body', () => {
   _resetReadCache();
   noteSearchedSymbol('fn5');
