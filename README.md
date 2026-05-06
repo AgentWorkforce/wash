@@ -1,4 +1,4 @@
-# relaywash
+![relaywash](wash-readme-banner.png)
 
 **Clean agent tool output. Lower token burn.**
 
