@@ -4,3 +4,4 @@ node_modules/
 .DS_Store
 # burn-compare local output (CI writes a different copy as a job artifact)
 compare-result.json
+.npm-cache
