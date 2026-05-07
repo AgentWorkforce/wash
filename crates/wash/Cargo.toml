@@ -1,0 +1,38 @@
+[package]
+name = "wash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "relaywash — clean agent tool output, lower token burn"
+
+[lib]
+name = "wash"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wash"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Search backend (ripgrep stack — pure Rust, no external `rg` dependency).
+ignore = "0.4"
+globset = "0.4"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+grep-matcher = "0.1"
+regex = "1"
+indexmap = "2"
+
+# Tree-sitter for AST-aware Read.
+tree-sitter = "0.26"
+tree-sitter-typescript = "0.23"
+tree-sitter-javascript = "0.25"
+
+[dev-dependencies]
+tempfile = "3"

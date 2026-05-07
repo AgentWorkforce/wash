@@ -7,5 +7,5 @@ allowed-tools:
 Run the savings reporter for this session:
 
 ```
-!`node ${CLAUDE_PLUGIN_ROOT}/scripts/relaywash-savings/run.js ${CLAUDE_SESSION_ID:-default}`
+!`node ${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs savings --session ${CLAUDE_SESSION_ID:-default}`
 ```

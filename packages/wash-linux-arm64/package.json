@@ -1,0 +1,17 @@
+{
+  "name": "@relaywash/wash-linux-arm64",
+  "version": "0.1.0",
+  "description": "wash native binary for linux/arm64. Installed automatically as an optional dependency of relaywash.",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "files": ["bin"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentWorkforce/wash.git",
+    "directory": "packages/wash-linux-arm64"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

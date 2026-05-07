@@ -1,14 +1,38 @@
 {
   "name": "relaywash",
   "version": "0.1.0",
-  "description": "Claude Code plugin: clean agent tool output, lower token burn",
+  "description": "Clean agent tool output, lower token burn. Replaces Claude Code's built-in file/shell tools with structured Rust equivalents.",
   "type": "module",
   "license": "MIT",
-  "engines": {
-    "node": ">=20.11"
+  "homepage": "https://github.com/AgentWorkforce/wash",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentWorkforce/wash.git"
   },
+  "bin": {
+    "wash": "bin/wash.mjs",
+    "relaywash": "bin/wash.mjs"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "package.json"
+  ],
   "scripts": {
-    "build": "node build/build.mjs",
-    "test": "node --test --test-reporter=spec test/*.test.js"
+    "build": "cargo build --release && node scripts/copy-binary.mjs",
+    "test": "cargo test --release"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@relaywash/wash-darwin-arm64": "0.1.0",
+    "@relaywash/wash-darwin-x64": "0.1.0",
+    "@relaywash/wash-linux-arm64": "0.1.0",
+    "@relaywash/wash-linux-x64": "0.1.0",
+    "@relaywash/wash-win32-x64": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

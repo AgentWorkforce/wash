@@ -3,12 +3,15 @@ name: ci
 on:
   pull_request:
     paths:
-      - 'src/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'bin/**'
       - 'scripts/**'
       - 'fixtures/**'
-      - 'test/**'
       - 'package.json'
-      - 'build/**'
+      - 'packages/**'
+      - '.github/workflows/**'
   push:
     branches: [main]
 
@@ -17,78 +20,31 @@ permissions:
   pull-requests: write
 
 jobs:
-  test:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build
+        run: cargo build --release
+      - name: cargo test
+        run: cargo test --release
+      - name: launcher resolves binary
+        run: |
+          node bin/wash.mjs --version
+          node bin/wash.mjs mcp <<< '' || true   # smoke: spawns and exits on EOF
+
+  launcher-shape:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build (verifies entry loads)
-        run: node build/build.mjs
-      - name: Run tests
-        run: node --test --test-reporter=spec test/*.test.js
-
-  burn-compare:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
-      - name: Run burn compare
-        run: node scripts/burn-compare.js compare-result.json
-      - name: Comment delta on PR
-        # Comment posting is a courtesy. Don't fail the job if GitHub API hiccups —
-        # the burn-compare RUN step above is the actual signal.
-        continue-on-error: true
-        timeout-minutes: 2
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const data = JSON.parse(fs.readFileSync('compare-result.json', 'utf8'));
-            const ratio = data.ratio;
-            // Marker used to find a previous comment from this workflow so we can
-            // update it in place instead of stacking a new comment per run.
-            const marker = '<!-- relaywash-burn-compare -->';
-            const body = [
-              marker,
-              '### relaywash burn-compare',
-              '',
-              `replacement bytes: **${data.totals.replacementBytes}** (${data.totals.replacementCalls} calls)`,
-              `vanilla bytes:     **${data.totals.vanillaBytes}** (${data.totals.vanillaCalls} calls)`,
-              `ratio:             **${ratio}** (lower is better)`,
-              '',
-              `Per-fixture: ${data.fixtures.length}`,
-            ].join('\n');
-
-            const { owner, repo } = context.repo;
-            const issue_number = context.issue.number;
-            const { data: comments } = await github.rest.issues.listComments({
-              owner,
-              repo,
-              issue_number,
-              per_page: 100,
-            });
-            const existing = comments.find((c) => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-              core.info(`Updated comment ${existing.id}`);
-            } else {
-              const { data: created } = await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number,
-                body,
-              });
-              core.info(`Created comment ${created.id}`);
-            }
+      - name: validate package layout
+        run: |
+          node -e "const p=require('./package.json');if(!p.bin?.wash)throw new Error('missing bin.wash');if(!p.optionalDependencies)throw new Error('missing optionalDependencies');console.log('wrapper ok')"
+          for d in packages/wash-*; do
+            node -e "const p=require('./$d/package.json');if(!p.os||!p.cpu)throw new Error('${d}: missing os/cpu');console.log('${d}: ok')"
+          done

@@ -1,0 +1,17 @@
+{
+  "name": "@relaywash/wash-darwin-x64",
+  "version": "0.1.0",
+  "description": "wash native binary for darwin/x64. Installed automatically as an optional dependency of relaywash.",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": ["bin"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentWorkforce/wash.git",
+    "directory": "packages/wash-darwin-x64"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

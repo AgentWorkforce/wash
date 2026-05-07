@@ -2,7 +2,7 @@
   "mcpServers": {
     "relaywash": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/relaywash-server.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs", "mcp"],
       "alwaysLoad": true
     }
   }

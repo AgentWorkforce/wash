@@ -1,0 +1,17 @@
+{
+  "name": "@relaywash/wash-win32-x64",
+  "version": "0.1.0",
+  "description": "wash native binary for win32/x64. Installed automatically as an optional dependency of relaywash.",
+  "license": "MIT",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": ["bin"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentWorkforce/wash.git",
+    "directory": "packages/wash-win32-x64"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

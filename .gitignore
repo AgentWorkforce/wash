@@ -5,3 +5,9 @@ node_modules/
 # burn-compare local output (CI writes a different copy as a job artifact)
 compare-result.json
 .npm-cache
+# Rust build output
+target/
+Cargo.lock
+# Per-platform binary payloads — produced by CI on publish, never committed.
+packages/*/bin/wash
+packages/*/bin/wash.exe
