@@ -230,7 +230,12 @@ fn build_command(runner: &str, pattern: Option<&str>, paths: &[String]) -> Optio
             v
         }
         "go" => {
-            let mut v = vec![s("go"), s("test"), s("./...")];
+            let mut v = vec![s("go"), s("test")];
+            if !paths.is_empty() {
+                v.extend(paths.iter().cloned());
+            } else {
+                v.push(s("./..."));
+            }
             if let Some(p) = pattern {
                 v.extend([s("-run"), p.into()]);
             }
@@ -245,6 +250,10 @@ fn build_command(runner: &str, pattern: Option<&str>, paths: &[String]) -> Optio
         }
         "node" => {
             let mut v = vec![s("node"), s("--test")];
+            if let Some(p) = pattern {
+                // node --test exposes test-name filtering via --test-name-pattern.
+                v.extend([s("--test-name-pattern"), p.into()]);
+            }
             if !paths.is_empty() {
                 v.extend(paths.iter().cloned());
             } else {

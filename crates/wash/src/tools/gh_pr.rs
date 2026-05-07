@@ -139,10 +139,10 @@ fn view(cwd: &std::path::Path, args: &Value) -> Result<Value> {
             }
         }
         if let Some(body) = obj.get_mut("body").and_then(|v| v.as_str().map(String::from)) {
-            if body.len() > BODY_TRUNCATE {
+            if body.chars().count() > BODY_TRUNCATE {
                 obj.insert(
                     "body".into(),
-                    Value::String(format!("{}\n... (truncated)", &body[..BODY_TRUNCATE])),
+                    Value::String(format!("{}\n... (truncated)", truncate_chars(&body, BODY_TRUNCATE))),
                 );
             }
         }
@@ -297,6 +297,13 @@ fn parse_diff_header(header: &str) -> Option<String> {
     Some(after_a[b_start + 3..].trim().to_string())
 }
 
+/// Char-aware truncation. Byte-slicing a UTF-8 string at a fixed byte offset panics
+/// when the cut lands mid-codepoint (common with emoji and non-ASCII text in PR bodies
+/// and comments).
+fn truncate_chars(s: &str, limit: usize) -> String {
+    s.chars().take(limit).collect()
+}
+
 fn comments(cwd: &std::path::Path, args: &Value) -> Result<Value> {
     let number = args
         .get("number")
@@ -316,8 +323,8 @@ fn comments(cwd: &std::path::Path, args: &Value) -> Result<Value> {
     let review: Value = serde_json::from_str(&review_raw)?;
     let issues: Value = serde_json::from_str(&issue_raw)?;
     let trim = |s: &str| -> String {
-        if s.len() > COMMENT_TRUNCATE {
-            format!("{}\n... (truncated)", &s[..COMMENT_TRUNCATE])
+        if s.chars().count() > COMMENT_TRUNCATE {
+            format!("{}\n... (truncated)", truncate_chars(s, COMMENT_TRUNCATE))
         } else {
             s.to_string()
         }

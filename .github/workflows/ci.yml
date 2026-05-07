@@ -31,9 +31,13 @@ jobs:
       - name: cargo test
         run: cargo test --release
       - name: launcher resolves binary
+        # `wash mcp` reads MCP frames from stdin until EOF and exits 0 cleanly.
+        # The integration test (`tests/mcp_stdio.rs`) drives the full protocol;
+        # this is just a launcher-resolution smoke (asserts the Node-side bin/wash.mjs
+        # finds and execs the Rust binary).
         run: |
           node bin/wash.mjs --version
-          node bin/wash.mjs mcp <<< '' || true   # smoke: spawns and exits on EOF
+          node bin/wash.mjs mcp <<< ''
 
   launcher-shape:
     runs-on: ubuntu-latest

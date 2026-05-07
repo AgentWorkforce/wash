@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::write_continue;
+use super::{sanitize_session_id, write_continue};
 use crate::burn::Ledger;
 use crate::profile::{ledger_home, pick_fields};
 
@@ -69,12 +69,12 @@ fn run_with(
     payload: &Value,
     out: &mut impl Write,
 ) -> Result<()> {
-    let session_id = payload
+    let raw_session = payload
         .get("session_id")
         .or_else(|| payload.get("sessionId"))
         .and_then(|v| v.as_str())
-        .unwrap_or("default")
-        .to_string();
+        .unwrap_or("default");
+    let session_id = sanitize_session_id(raw_session);
     let tool_name_full = payload
         .get("tool_name")
         .or_else(|| payload.get("toolName"))

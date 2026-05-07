@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::io::{Read, Write};
 
 use crate::meta::Meta;
@@ -39,6 +40,11 @@ pub struct McpServer {
     tools: Vec<Tool>,
     post_call: Option<PostCall>,
     session_id: Option<String>,
+    /// Set by `dispatch` when an `shutdown`/`exit` request arrives. The run loop checks
+    /// this between frames and returns Ok(()) so Drops fire and any buffered ledger
+    /// state is flushed via normal scope exit (rather than `process::exit` which skips
+    /// destructors).
+    shutdown: Cell<bool>,
 }
 
 impl McpServer {
@@ -49,6 +55,7 @@ impl McpServer {
             tools: Vec::new(),
             post_call: None,
             session_id: std::env::var("CLAUDE_SESSION_ID").ok(),
+            shutdown: Cell::new(false),
         }
     }
 
@@ -87,9 +94,15 @@ impl McpServer {
                 if let Value::Array(arr) = parsed {
                     for m in arr {
                         self.handle_one(&m, &mut writer)?;
+                        if self.shutdown.get() {
+                            return Ok(());
+                        }
                     }
                 } else {
                     self.handle_one(&parsed, &mut writer)?;
+                    if self.shutdown.get() {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -167,7 +180,10 @@ impl McpServer {
                 Ok(Some(format_tool_result(&out)))
             }
             "ping" => Ok(Some(json!({}))),
-            "shutdown" | "exit" => std::process::exit(0),
+            "shutdown" | "exit" => {
+                self.shutdown.set(true);
+                Ok(None)
+            }
             _ => Err(anyhow!("Method not implemented: {method}")),
         }
     }
@@ -193,10 +209,21 @@ fn send(writer: &mut impl Write, payload: &Value) -> Result<()> {
 
 /// Pull one complete LSP-style framed message from `buf`. Returns the body bytes and trims
 /// `buf` past the consumed prefix. Returns `None` if no complete message is available yet.
+///
+/// On malformed headers (non-UTF-8 or missing `Content-Length`), drains the bad header
+/// up through the `\r\n\r\n` and returns `None`. Without this consumption the bad header
+/// would stay at the front of the buffer forever and wedge the parser on subsequent reads.
 fn take_framed_message(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
     let header_end = find_subseq(buf, b"\r\n\r\n")?;
-    let header = std::str::from_utf8(&buf[..header_end]).ok()?;
-    let len = parse_content_length(header)?;
+    let drop_header = || -> Option<Vec<u8>> { None };
+    let Ok(header) = std::str::from_utf8(&buf[..header_end]) else {
+        buf.drain(..header_end + 4);
+        return drop_header();
+    };
+    let Some(len) = parse_content_length(header) else {
+        buf.drain(..header_end + 4);
+        return drop_header();
+    };
     let start = header_end + 4;
     if buf.len() < start + len {
         return None;
@@ -238,6 +265,16 @@ mod tests {
     fn frames_partial_returns_none() {
         let mut buf = b"Content-Length: 10\r\n\r\nhello".to_vec();
         assert!(take_framed_message(&mut buf).is_none());
+    }
+
+    #[test]
+    fn malformed_header_drops_and_recovers() {
+        // Bad header followed by a valid frame. The first call drops the bad header,
+        // the second consumes the good one.
+        let mut buf = b"Garbage: yes\r\n\r\nContent-Length: 5\r\n\r\nhello".to_vec();
+        assert!(take_framed_message(&mut buf).is_none());
+        let body = take_framed_message(&mut buf).expect("recover after bad header");
+        assert_eq!(body, b"hello");
     }
 
     #[test]

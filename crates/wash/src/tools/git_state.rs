@@ -293,7 +293,7 @@ fn git_diff_or_show(a: &Args) -> Result<DiffOut> {
     let revision = a.revision.as_ref().unwrap_or(&head).clone();
 
     let mut stat_cmd: Vec<String> = match a.op {
-        Op::Show => vec!["show".into(), "--stat=200".into(), revision.clone()],
+        Op::Show => vec!["show".into(), revision.clone()],
         _ => {
             let mut v = vec!["diff".into()];
             match (&a.base, &a.revision) {

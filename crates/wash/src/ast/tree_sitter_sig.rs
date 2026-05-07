@@ -40,14 +40,30 @@ pub(crate) fn parses_cleanly(text: &str, language: Language) -> Option<bool> {
 }
 
 fn walk(node: Node, src: &[u8], lines: &[&str], out: &mut Vec<String>, line_map: &mut Vec<LineMapEntry>) {
+    walk_with_outer(node, node.start_byte(), src, lines, out, line_map)
+}
+
+/// Like `walk`, but uses `outer_start` instead of the node's own `start_byte()` when
+/// slicing header text. The export-statement branch passes the export's start so that
+/// `export function foo` keeps its prefix when we elide the body — losing `export ` is
+/// what the byte-range fix would otherwise do, since recursion into the inner
+/// `function_declaration` only sees from `function` onward.
+fn walk_with_outer(
+    node: Node,
+    outer_start: usize,
+    src: &[u8],
+    lines: &[&str],
+    out: &mut Vec<String>,
+    line_map: &mut Vec<LineMapEntry>,
+) {
     let kind = node.kind();
     match kind {
         "import_statement" | "import_declaration" => {
-            push_node_lines(node, lines, out);
+            push_node_text(outer_start, node.end_byte(), src, out);
             return;
         }
         "interface_declaration" | "type_alias_declaration" | "enum_declaration" => {
-            push_node_lines(node, lines, out);
+            push_node_text(outer_start, node.end_byte(), src, out);
             if let Some(sym) = name_of(node, src) {
                 line_map.push(LineMapEntry {
                     symbol: sym,
@@ -61,15 +77,15 @@ fn walk(node: Node, src: &[u8], lines: &[&str], out: &mut Vec<String>, line_map:
         | "method_definition"
         | "generator_function_declaration"
         | "method_signature" => {
-            emit_signature(node, src, lines, out, line_map);
+            emit_signature(node, outer_start, src, out, line_map);
             return;
         }
         "class_declaration" | "abstract_class_declaration" => {
-            emit_class(node, src, lines, out, line_map);
+            emit_class(node, outer_start, src, lines, out, line_map);
             return;
         }
         "lexical_declaration" | "variable_declaration" => {
-            push_node_lines(node, lines, out);
+            push_node_text(outer_start, node.end_byte(), src, out);
             if let Some(sym) = first_named_var(node, src) {
                 line_map.push(LineMapEntry {
                     symbol: sym,
@@ -80,10 +96,10 @@ fn walk(node: Node, src: &[u8], lines: &[&str], out: &mut Vec<String>, line_map:
         }
         "export_statement" => {
             if let Some(decl) = node.child_by_field_name("declaration") {
-                walk(decl, src, lines, out, line_map);
+                walk_with_outer(decl, node.start_byte(), src, lines, out, line_map);
                 return;
             }
-            push_node_lines(node, lines, out);
+            push_node_text(outer_start, node.end_byte(), src, out);
             return;
         }
         _ => {}
@@ -95,8 +111,8 @@ fn walk(node: Node, src: &[u8], lines: &[&str], out: &mut Vec<String>, line_map:
 
 fn emit_signature(
     node: Node,
+    outer_start: usize,
     src: &[u8],
-    lines: &[&str],
     out: &mut Vec<String>,
     line_map: &mut Vec<LineMapEntry>,
 ) {
@@ -107,26 +123,24 @@ fn emit_signature(
         });
     }
     let body = node.child_by_field_name("body");
-    let header_end_row = body
-        .map(|b| b.start_position().row)
-        .unwrap_or_else(|| node.end_position().row);
-    let start_row = node.start_position().row;
-    let header = slice_lines(lines, start_row, header_end_row);
-    if body.is_some() {
+    if let Some(body) = body {
+        // Slice header by *byte offsets*, not whole lines — `foo() { return 1 }` on a
+        // single row would otherwise leak the body text. The header runs from
+        // `outer_start` (which may sit before the function node, e.g., the `export`
+        // keyword) to immediately before the body's opening brace.
+        let header = bytes_text(src, outer_start, body.start_byte());
         let mut combined = header.trim_end().to_string();
-        if !combined.ends_with('{') {
-            combined.push_str(" {");
-        }
-        combined.push_str(" …");
+        combined.push_str(" { …");
         out.push(combined);
         out.push("}".into());
     } else {
-        out.push(header);
+        out.push(bytes_text(src, outer_start, node.end_byte()));
     }
 }
 
 fn emit_class(
     node: Node,
+    outer_start: usize,
     src: &[u8],
     lines: &[&str],
     out: &mut Vec<String>,
@@ -141,20 +155,18 @@ fn emit_class(
     let body = match node.child_by_field_name("body") {
         Some(b) => b,
         None => {
-            push_node_lines(node, lines, out);
+            push_node_text(outer_start, node.end_byte(), src, out);
             return;
         }
     };
-    let header = slice_lines(lines, node.start_position().row, body.start_position().row);
+    let header = bytes_text(src, outer_start, body.start_byte());
     let mut header = header.trim_end().to_string();
-    if !header.ends_with('{') {
-        header.push_str(" {");
-    }
+    header.push_str(" {");
     out.push(header);
     for child in body.children(&mut body.walk()) {
         match child.kind() {
             "method_definition" | "method_signature" => {
-                emit_signature(child, src, lines, out, line_map);
+                emit_signature(child, child.start_byte(), src, out, line_map);
             }
             "public_field_definition" | "field_definition" | "property_signature" => {
                 push_node_lines(child, lines, out);
@@ -176,6 +188,16 @@ fn slice_lines(lines: &[&str], start_row: usize, end_row: usize) -> String {
 fn push_node_lines(node: Node, lines: &[&str], out: &mut Vec<String>) {
     let s = slice_lines(lines, node.start_position().row, node.end_position().row);
     out.push(s);
+}
+
+fn push_node_text(start: usize, end: usize, src: &[u8], out: &mut Vec<String>) {
+    out.push(bytes_text(src, start, end));
+}
+
+fn bytes_text(src: &[u8], start: usize, end: usize) -> String {
+    let s = start.min(src.len());
+    let e = end.min(src.len()).max(s);
+    String::from_utf8_lossy(&src[s..e]).into_owned()
 }
 
 fn name_of(node: Node, src: &[u8]) -> Option<String> {

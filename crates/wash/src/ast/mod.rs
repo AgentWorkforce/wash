@@ -105,11 +105,18 @@ fn skip_string(bytes: &[u8], start: usize, quote: u8) -> usize {
             return i + 1;
         }
         if quote == b'`' && c == b'$' && bytes.get(i + 1).copied() == Some(b'{') {
-            // Walk through template-literal expression.
+            // Walk through template-literal expression. Strings within `${...}` can
+            // themselves contain unbalanced braces (e.g., `` `${foo + "}"}` ``); skip
+            // over them so a brace inside a string literal doesn't end the expression
+            // early.
             let mut depth = 1i32;
             i += 2;
             while i < bytes.len() && depth > 0 {
                 match bytes[i] {
+                    b'"' | b'\'' | b'`' => {
+                        i = skip_string(bytes, i, bytes[i]);
+                        continue;
+                    }
                     b'{' => depth += 1,
                     b'}' => depth -= 1,
                     _ => {}
@@ -189,7 +196,10 @@ pub fn find_body_end(lines: &[&str], header_idx: usize) -> usize {
         }
         return lines.len().saturating_sub(1);
     }
-    if header.trim_end().ends_with(':') {
+    // Python `:` body. Strip an optional `# comment` first so headers like
+    // `def foo():  # note` are still detected.
+    let py_stripped = header.split('#').next().unwrap_or(header).trim_end();
+    if py_stripped.ends_with(':') {
         let base_indent = leading_ws(header);
         for i in (header_idx + 1)..lines.len() {
             let l = lines[i];
@@ -263,5 +273,28 @@ export type Pair = [number, number];
     fn brace_body_end() {
         let lines = vec!["fn foo() {", "    let x = 1;", "    bar();", "}", "next"];
         assert_eq!(find_body_end(&lines, 0), 3);
+    }
+
+    #[test]
+    fn one_liner_body_extracted_via_byte_range() {
+        // Tree-sitter row-only slicing leaked body text for one-liners; this is the
+        // regression test for the byte-range fix in tree_sitter_sig::emit_signature.
+        let src = "export function add(a: number, b: number): number { return a + b; }\n";
+        let s = extract_signatures(src, Language::TypeScript);
+        assert!(s.content.contains("export function add"), "header preserved");
+        assert!(s.content.contains("…"), "body elided with marker");
+        assert!(
+            !s.content.contains("return a + b"),
+            "body must not leak into signature: {}",
+            s.content
+        );
+    }
+
+    #[test]
+    fn python_body_detected_with_inline_comment() {
+        let src = "def foo():  # note\n    return 1\nnext\n";
+        let lines: Vec<&str> = src.split('\n').collect();
+        // Header is line 0; body should span line 1; line 2 is outside.
+        assert_eq!(find_body_end(&lines, 0), 1);
     }
 }

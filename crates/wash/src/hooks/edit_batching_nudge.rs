@@ -8,7 +8,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use super::{write_continue, write_json};
+use super::{sanitize_session_id, write_continue, write_json};
 
 const HISTORY_WINDOW: usize = 5;
 const SINGLE_EDIT_THRESHOLD: usize = 3;
@@ -30,12 +30,12 @@ pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
 }
 
 fn run_in(dir: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
-    let session_id = payload
+    let raw_session = payload
         .get("session_id")
         .or_else(|| payload.get("sessionId"))
         .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
+        .unwrap_or("unknown");
+    let session_id = sanitize_session_id(raw_session);
     let edit_count: u32 = payload
         .get("tool_input")
         .or_else(|| payload.get("toolInput"))

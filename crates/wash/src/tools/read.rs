@@ -94,6 +94,9 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
         let Some((start, end)) = range else {
             bail!("mode: \"range\" requires `range: [start, end]`");
         };
+        if start < 1 || start > end {
+            bail!("range must be 1-based inclusive [start, end] with start >= 1 and start <= end");
+        }
         let lines: Vec<&str> = text.split('\n').collect();
         let s = start.saturating_sub(1).min(lines.len());
         let e = end.min(lines.len());

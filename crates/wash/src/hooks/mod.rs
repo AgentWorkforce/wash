@@ -46,3 +46,37 @@ pub(crate) fn write_json(out: &mut impl Write, value: &serde_json::Value) -> Res
     writeln!(out, "{value}")?;
     Ok(())
 }
+
+/// Map a session id to a filename-safe slug. Hooks compose paths like
+/// `${RELAYBURN_HOME}/observe/<session>.json`; without sanitization a crafted id like
+/// `../../etc/passwd` would let the harness write outside the intended directory.
+pub(crate) fn sanitize_session_id(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "unknown".to_string()
+    } else {
+        cleaned
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_strips_path_separators() {
+        assert_eq!(sanitize_session_id("../../etc/passwd"), "______etc_passwd");
+        assert_eq!(sanitize_session_id("session-abc_123"), "session-abc_123");
+        assert_eq!(sanitize_session_id(""), "unknown");
+        assert_eq!(sanitize_session_id("//"), "__");
+    }
+}

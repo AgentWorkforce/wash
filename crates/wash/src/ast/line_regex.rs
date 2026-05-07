@@ -51,7 +51,14 @@ pub fn extract(text: &str, language: Language) -> Signatures {
                 i += 1;
                 continue;
             }
-            if language == Language::Python && line.trim_end().ends_with(':') {
+            // Python `:` block. Strip an optional `# comment` so headers like
+            // `def foo():  # note` are still detected.
+            let py_header = if language == Language::Python {
+                line.split('#').next().unwrap_or(line).trim_end()
+            } else {
+                line.trim_end()
+            };
+            if language == Language::Python && py_header.ends_with(':') {
                 out.push(format!("{line}  # …"));
                 let base_indent = leading_ws(line);
                 let mut j = i + 1;

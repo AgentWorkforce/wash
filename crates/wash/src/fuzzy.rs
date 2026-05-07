@@ -96,6 +96,15 @@ fn normalize_with_map(s: &str) -> (String, Vec<usize>) {
             last_was_space = false;
         }
     }
+    // Mirror the per-line trailing-trim that `normalize_for_match` applies to the last
+    // line. Without this, a haystack like `"return x  "` (no trailing newline) keeps a
+    // collapsed trailing space in the normalized form, while the same text in a needle
+    // gets its trailing space trimmed — the resulting end index from `map_back` lands
+    // one byte short and any splice excludes the trailing space from the original.
+    while normalized.ends_with(' ') {
+        normalized.pop();
+        map_back.pop();
+    }
     (normalized, map_back)
 }
 
@@ -150,5 +159,21 @@ mod tests {
     fn no_match_returns_empty() {
         let matches = fuzzy_find_all("hello", "world");
         assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn trailing_space_at_eof_normalized_consistently() {
+        // After the EOF-trim fix, the haystack normalizes to the same form as the
+        // needle. The match's `end` then falls past the final `map_back` entry, so
+        // it gets clamped to `haystack.len()` — meaning the splice covers the full
+        // original including the trailing whitespace. That's the desired behavior:
+        // a replacement of the matched span won't leave orphan trailing spaces.
+        let haystack = "return x  ";
+        let needle = "return x";
+        let matches = fuzzy_find_all(haystack, needle);
+        assert_eq!(matches.len(), 1);
+        let (start, end) = matches[0];
+        assert_eq!(start, 0);
+        assert_eq!(end, haystack.len(), "end must extend to haystack length when trailing whitespace was trimmed during normalization");
     }
 }
