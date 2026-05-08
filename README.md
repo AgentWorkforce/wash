@@ -90,7 +90,6 @@ packages/              per-platform npm packages — binaries injected by CI
   wash-win32-x64/
 fixtures/corpus/       recorded sessions for burn-compare
 docs/                  including compaction-attribution.md
-legacy-ts/             original Node implementation, retired but preserved for diff/blame
 ```
 
 ## Distribution
@@ -133,7 +132,7 @@ node scripts/copy-binary.mjs # stage the local binary into the host platform pac
 
 Pre-commit safety: `cargo test --release` exercises the parsers, the MCP framing, and a stdio integration test that spawns the binary and lists tools. CI (`.github/workflows/ci.yml`) runs the same plus a layout sanity check on each platform package's `package.json`.
 
-The retired Node implementation lives under `legacy-ts/`, including the original hook scripts and the JS burn SDK stub. Hooks are now Rust subcommands invoked through the launcher: `node bin/wash.mjs hook <kind>` (where kind ∈ `builtin-block`, `tool-redirect`, `edit-batching-nudge`, `post-tool-observe`, `session-start`, `session-stop`). The `/relaywash-savings` slash command calls `wash savings --session …` directly.
+Hooks are Rust subcommands invoked through the launcher: `node bin/wash.mjs hook <kind>` (where kind ∈ `builtin-block`, `tool-redirect`, `edit-batching-nudge`, `post-tool-observe`, `session-start`, `session-stop`). The `/relaywash-savings` slash command calls `wash savings --session …` directly.
 
 ## Adaptive layer substrate ([wash#13](https://github.com/AgentWorkforce/wash/issues/13))
 

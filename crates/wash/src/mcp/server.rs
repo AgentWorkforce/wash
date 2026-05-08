@@ -190,9 +190,10 @@ impl McpServer {
 }
 
 fn format_tool_result(r: &ToolResult) -> Value {
-    // Tools return a structured object. We emit it as a single text block of JSON so models
-    // see the data, plus mirror it under `structuredContent` for hosts that read it.
-    let text = serde_json::to_string_pretty(&r.value).unwrap_or_else(|_| "{}".into());
+    // The model reads `content[].text`. Use compact JSON — pretty-printing roughly
+    // doubles the whitespace tokens for nested results, which defeats the whole point
+    // of this server. Hosts that prefer a parsed view read `structuredContent`.
+    let text = serde_json::to_string(&r.value).unwrap_or_else(|_| "{}".into());
     json!({
         "content": [{"type": "text", "text": text}],
         "structuredContent": r.value,

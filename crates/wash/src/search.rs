@@ -59,9 +59,14 @@ pub fn run(opts: SearchOpts) -> Result<Vec<SearchHit>> {
         if searcher.search_path(&matcher, abs, &mut sink).is_err() {
             continue;
         }
-        for snippet in sink.into_snippets(opts.context_lines as u32) {
+        let snippets = sink.into_snippets(opts.context_lines as u32);
+        if snippets.is_empty() {
+            continue;
+        }
+        let rel = relativize(&opts.cwd, abs);
+        for snippet in snippets {
             hits.push(SearchHit {
-                path: relativize(&opts.cwd, abs),
+                path: rel.clone(),
                 line_start: snippet.line_start,
                 line_end: snippet.line_end,
                 snippet: snippet.text,
@@ -102,8 +107,8 @@ impl HitSink {
     fn into_snippets(self, context_lines: u32) -> Vec<GroupedSnippet> {
         let mut snippets = Vec::new();
         let mut group: Vec<u32> = Vec::new();
-        let mut iter = self.lines.keys().copied().collect::<Vec<_>>();
-        iter.sort_unstable();
+        // BTreeMap iterates keys in sorted order — no extra sort needed.
+        let iter: Vec<u32> = self.lines.keys().copied().collect();
 
         let flush = |group: &mut Vec<u32>, snippets: &mut Vec<GroupedSnippet>, lines: &BTreeMap<u32, String>, match_lines: &HashSet<u32>| {
             if group.is_empty() {

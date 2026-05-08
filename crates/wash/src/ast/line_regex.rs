@@ -123,9 +123,9 @@ fn symbol_from_header(line: &str) -> Option<String> {
 }
 
 fn strip_inline_comments(s: &str) -> String {
+    static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
     let no_line = if let Some(i) = s.find("//") { &s[..i] } else { s };
-    // Remove block comments on a single line.
-    let block_re = Regex::new(r"/\*.*?\*/").unwrap();
+    let block_re = BLOCK_RE.get_or_init(|| Regex::new(r"/\*.*?\*/").unwrap());
     block_re.replace_all(no_line, "").into_owned()
 }
 
