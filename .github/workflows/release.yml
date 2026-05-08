@@ -1,0 +1,130 @@
+name: release
+
+# Triggers on `v*` tag pushes. Builds the wash binary for each supported target,
+# stuffs each into the matching platform package, then publishes the 5 platform
+# packages plus the wrapper to npm — all at the same version.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 0.1.0). Tag-driven release uses the tag.'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            platform: darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            os: macos-14
+            platform: darwin
+            arch: x64
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux
+            arch: x64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux
+            arch: arm64
+            cross: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            platform: win32
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: install cross
+        if: matrix.cross == true
+        run: cargo install cross --locked
+      - name: build
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p wash
+          else
+            cargo build --release --target ${{ matrix.target }} -p wash
+          fi
+      - name: stage binary
+        shell: bash
+        env:
+          WASH_TARGET_PLATFORM: ${{ matrix.platform }}
+          WASH_TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          if [ "${{ matrix.platform }}" = "win32" ]; then
+            export WASH_BIN_PATH="target/${{ matrix.target }}/release/wash.exe"
+          else
+            export WASH_BIN_PATH="target/${{ matrix.target }}/release/wash"
+          fi
+          node scripts/copy-binary.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wash-${{ matrix.platform }}-${{ matrix.arch }}
+          path: packages/wash-${{ matrix.platform }}-${{ matrix.arch }}/bin/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: place binaries
+        run: |
+          for d in artifacts/wash-*; do
+            name=$(basename "$d")
+            mkdir -p "packages/$name/bin"
+            cp -r "$d"/* "packages/$name/bin/"
+          done
+          ls -la packages/wash-*/bin/
+      - name: derive version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: bump versions
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          for pkg in packages/wash-*/package.json package.json; do
+            tmp=$(mktemp)
+            jq --arg v "$v" '.version = $v
+              | (.optionalDependencies |= (if . then with_entries(.value = $v) else . end))' \
+              "$pkg" > "$tmp" && mv "$tmp" "$pkg"
+          done
+      - name: publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for d in packages/wash-*; do
+            (cd "$d" && npm publish --access public)
+          done
+      - name: publish wrapper
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

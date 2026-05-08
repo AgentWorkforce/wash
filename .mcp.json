@@ -2,7 +2,8 @@
   "mcpServers": {
     "relaywash": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/relaywash-server.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs", "mcp"],
+      "_comment": "args is an array, so each element is passed verbatim to spawn — path with spaces is safe here without explicit quoting.",
       "alwaysLoad": true
     }
   }

@@ -1,3 +1,11 @@
 {
-  "agent": "relaywash:code"
+  "agent": "relaywash:code",
+  "wash": {
+    "learning": {
+      "mode": "off",
+      "scope": "per-repo",
+      "minObservations": 20,
+      "experiment": false
+    }
+  }
 }

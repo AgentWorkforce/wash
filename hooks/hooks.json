@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-start-hook.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs\" hook session-start"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/builtin-block-hook.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs\" hook builtin-block"
           }
         ]
       },
@@ -25,18 +25,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/tool-redirect-hook.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs\" hook tool-redirect"
           }
         ]
       }
     ],
     "PostToolUse": [
       {
+        "matcher": "mcp__relaywash__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs\" hook post-tool-observe"
+          }
+        ]
+      },
+      {
         "matcher": "mcp__relaywash__Edit",
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/edit-batching-nudge.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs\" hook edit-batching-nudge"
           }
         ]
       }
@@ -46,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-stop-ingest-hook.js"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/wash.mjs\" hook session-stop"
           }
         ]
       }
