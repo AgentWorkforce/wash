@@ -10,7 +10,6 @@ use std::time::UNIX_EPOCH;
 use crate::ast::{LineMapEntry, Signatures, extract_signatures, find_body_end};
 use crate::language::Language;
 use crate::mcp::{Tool, ToolContext, ToolResult};
-use crate::meta::Meta;
 use crate::profile;
 use crate::state;
 
@@ -83,7 +82,6 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "truncated": false,
                 "languageDetected": language.as_str(),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -108,7 +106,6 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "truncated": false,
                 "languageDetected": language.as_str(),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -120,7 +117,6 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "truncated": false,
                 "languageDetected": language.as_str(),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -136,7 +132,6 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "truncated": false,
                 "languageDetected": language.as_str(),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -159,7 +154,6 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
             "languageDetected": language.as_str(),
             "lineMap": sigs.line_map,
         }),
-        Some(Meta::new(["Read".to_string()], 1)),
     ))
 }
 

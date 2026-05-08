@@ -107,14 +107,12 @@ fn run(args: &Value) -> Result<ToolResult> {
         vec!["Glob"]
     };
     let collapsed = (results.len() * replaces.len()).max(1) as u32;
-    let meta = Meta::new(replaces.iter().map(|s| s.to_string()), collapsed);
-
     let value = json!({
         "results": results,
         "truncated": truncated,
-        "_meta": meta.clone(),
+        "_meta": Meta::new(replaces.iter().map(|s| s.to_string()), collapsed),
     });
-    Ok(ToolResult::new("relaywash__Search", value, Some(meta)))
+    Ok(ToolResult::new("relaywash__Search", value))
 }
 
 fn rank_results(mut results: Vec<SearchHit>, mode: &str, cwd: &std::path::Path) -> Vec<SearchHit> {

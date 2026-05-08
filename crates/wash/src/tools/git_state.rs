@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 use std::process::{Command, Stdio};
 
 use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
 
 const DESCRIPTION: &str = "Structured git status/diff/log/show. Returns file lists + summary stats; per-file diffs are truncated. Use this instead of raw `git status`/`git diff`/`git log`/`git show` Bash calls.";
 
@@ -38,20 +37,9 @@ pub fn tool() -> Tool {
         handler: Box::new(|args, _ctx| {
             let parsed = Args::parse(args)?;
             let value = run(parsed)?;
-            Ok(ToolResult::new(
-                "relaywash__GitState",
-                value,
-                Some(Meta::new([format!("Bash:git-{}", op_label(args))], 1)),
-            ))
+            Ok(ToolResult::new("relaywash__GitState", value))
         }),
     }
-}
-
-fn op_label(args: &Value) -> String {
-    args.get("op")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?")
-        .to_string()
 }
 
 #[derive(Debug)]

@@ -46,10 +46,11 @@ up (e.g. `git status`, `pnpm test`).
 
 ## Measurement
 
-relaywash bundles a stub of `relayburn/sdk` (the real package is blocked on
-[AgentWorkforce/burn#218](https://github.com/AgentWorkforce/burn/issues/218)). On every
-session end, the `Stop` hook ingests the session into the local ledger at
-`~/.relayburn/` (override with `RELAYBURN_HOME`). To see your savings:
+relaywash depends on the [`relayburn-sdk`](https://crates.io/crates/relayburn-sdk) crate
+for ledger reads/writes. On every session end, the `Stop` hook calls `sdk::ingest`, which
+reads the Claude Code transcript directly — including each tool result's
+`_meta: { replaces, collapsedCalls }` annotation — and folds it into the local ledger at
+`~/.agentworkforce/burn/` (override with `RELAYBURN_HOME`). To see your savings:
 
 ```
 /relaywash-savings

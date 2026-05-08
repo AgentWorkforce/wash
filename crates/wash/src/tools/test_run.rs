@@ -64,7 +64,6 @@ fn run(args: &Value) -> Result<ToolResult> {
         return Ok(ToolResult::new(
             "relaywash__TestRun",
             fetch_failure_slice(name)?,
-            Some(Meta::new(["Bash:test".to_string()], 1)),
         ));
     }
 
@@ -153,11 +152,7 @@ fn run(args: &Value) -> Result<ToolResult> {
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new(
-        "relaywash__TestRun",
-        value,
-        Some(Meta::new(["Bash:test".to_string()], 1)),
-    ))
+    Ok(ToolResult::new("relaywash__TestRun", value))
 }
 
 fn detect_runner(cwd: &Path) -> String {

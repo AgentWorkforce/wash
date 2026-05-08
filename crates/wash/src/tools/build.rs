@@ -134,11 +134,7 @@ fn run(args: &Value) -> Result<ToolResult> {
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new(
-        "relaywash__Build",
-        value,
-        Some(Meta::new(["Bash:build".to_string()], 1)),
-    ))
+    Ok(ToolResult::new("relaywash__Build", value))
 }
 
 fn detect_builder(cwd: &Path) -> String {
