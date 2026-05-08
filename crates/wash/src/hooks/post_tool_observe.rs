@@ -112,7 +112,9 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
 
     // Read previous tool/args for this session, then update.
     let state_dir = home.join(STATE_SUBDIR);
-    fs::create_dir_all(&state_dir).ok();
+    if let Err(e) = fs::create_dir_all(&state_dir) {
+        eprintln!("relaywash: observe state dir create failed ({}): {e}", state_dir.display());
+    }
     let state_path = state_dir.join(format!("{session_id}.json"));
     let prev: SessionState = fs::read_to_string(&state_path)
         .ok()
@@ -132,10 +134,19 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         last_tool: Some(tool.to_string()),
         last_args: Some(safe_args.clone()),
     };
-    let _ = fs::write(
-        &state_path,
-        serde_json::to_string(&new_state).unwrap_or_default(),
-    );
+    match serde_json::to_string(&new_state) {
+        Ok(state_json) => {
+            if let Err(e) = fs::write(&state_path, state_json) {
+                eprintln!(
+                    "relaywash: observe state write failed (session={session_id}, path={}): {e}",
+                    state_path.display()
+                );
+            }
+        }
+        Err(e) => eprintln!(
+            "relaywash: observe state serialize failed (session={session_id}): {e}"
+        ),
+    }
 
     // Best-effort from here down: the observe hook is telemetry, not user-visible work.
     // Any write/serialize failure is logged and dropped so the user's tool call still
@@ -152,7 +163,12 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
     }) {
         Ok(line) => {
             let events_dir = home.join(EVENTS_SUBDIR);
-            let _ = fs::create_dir_all(&events_dir);
+            if let Err(e) = fs::create_dir_all(&events_dir) {
+                eprintln!(
+                    "relaywash: observe events dir create failed ({}): {e}",
+                    events_dir.display()
+                );
+            }
             let events_path = events_dir.join(format!("{session_id}.jsonl"));
             match fs::OpenOptions::new()
                 .create(true)
