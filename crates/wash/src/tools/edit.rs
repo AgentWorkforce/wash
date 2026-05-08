@@ -291,6 +291,12 @@ fn locate(text: &str, edit: &EditSpec) -> Vec<(usize, usize)> {
 /// Write atomically: stage the new contents in a sibling temp file, then rename over the
 /// target. A crash mid-write leaves the original file untouched — `std::fs::write` would
 /// truncate first and could leave a half-written file behind.
+///
+/// Preserves the target's existing permissions across the replace. `rename` swaps the
+/// inode for our fresh temp file, which would otherwise drop the original mode bits
+/// (e.g., a `0755` script becoming non-executable). On Windows, MoveFileEx assigns the
+/// destination directory's default ACL on rename — copying permissions onto the temp
+/// file before the rename gives the same effective behavior on both platforms.
 fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
     let target = Path::new(path);
@@ -305,10 +311,25 @@ fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let tmp = dir.join(format!(".{file_name}.wash-{pid}-{nanos}.tmp"));
-    let mut f = std::fs::File::create(&tmp)?;
-    f.write_all(contents.as_bytes())?;
-    f.sync_all().ok();
-    drop(f);
+    let original_perms = std::fs::metadata(target).ok().map(|m| m.permissions());
+
+    let write_result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        if let Some(perms) = &original_perms {
+            std::fs::set_permissions(&tmp, perms.clone())?;
+        }
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()?;
+        Ok(())
+    })();
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
     if let Err(e) = std::fs::rename(&tmp, target) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
@@ -432,6 +453,28 @@ mod tests {
         assert_eq!(v["results"][1]["ok"], false);
         // But the file is unchanged — atomic per file.
         assert_eq!(fs::read_to_string(&path).unwrap(), "a = 1\nb = 2\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_preserves_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, path) = tmp_file("#!/bin/sh\necho original\n", ".sh");
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+
+        let v = call(json!([{
+            "path": &path,
+            "oldText": "echo original",
+            "newText": "echo edited"
+        }]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], true);
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755, "executable bit must survive atomic rename");
+        assert!(fs::read_to_string(&path).unwrap().contains("echo edited"));
     }
 
     #[test]
