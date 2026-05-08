@@ -10,6 +10,7 @@ use std::time::UNIX_EPOCH;
 use crate::ast::{LineMapEntry, Signatures, extract_signatures, find_body_end};
 use crate::language::Language;
 use crate::mcp::{Tool, ToolContext, ToolResult};
+use crate::meta::Meta;
 use crate::profile;
 use crate::state;
 
@@ -81,6 +82,7 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": "",
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
         ));
     }
@@ -105,6 +107,7 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": slice,
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
         ));
     }
@@ -116,6 +119,7 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": text,
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
         ));
     }
@@ -131,6 +135,7 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": text,
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
         ));
     }
@@ -153,6 +158,7 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
             "truncated": true,
             "languageDetected": language.as_str(),
             "lineMap": sigs.line_map,
+            "_meta": Meta::new(["Read".to_string()], 1),
         }),
     ))
 }
