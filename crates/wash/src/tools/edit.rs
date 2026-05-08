@@ -204,7 +204,7 @@ fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
         );
     }
 
-    if let Err(e) = std::fs::write(path, &current) {
+    if let Err(e) = atomic_write(path, &current) {
         let reason = format!("write failed: {e}");
         return rollback(path, edits, partial, usize::MAX, Some(reason));
     }
@@ -286,6 +286,34 @@ fn locate(text: &str, edit: &EditSpec) -> Vec<(usize, usize)> {
         return exact;
     }
     fuzzy_find_all(text, &edit.old_text)
+}
+
+/// Write atomically: stage the new contents in a sibling temp file, then rename over the
+/// target. A crash mid-write leaves the original file untouched — `std::fs::write` would
+/// truncate first and could leave a half-written file behind.
+fn atomic_write(path: &str, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let target = Path::new(path);
+    let dir = target.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = target
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = dir.join(format!(".{file_name}.wash-{pid}-{nanos}.tmp"));
+    let mut f = std::fs::File::create(&tmp)?;
+    f.write_all(contents.as_bytes())?;
+    f.sync_all().ok();
+    drop(f);
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 fn find_all_exact(text: &str, needle: &str) -> Vec<(usize, usize)> {
