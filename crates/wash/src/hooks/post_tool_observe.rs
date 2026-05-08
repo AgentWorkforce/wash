@@ -137,7 +137,10 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         serde_json::to_string(&new_state).unwrap_or_default(),
     );
 
-    let line = serde_json::to_string(&OutcomeLine {
+    // Best-effort from here down: the observe hook is telemetry, not user-visible work.
+    // Any write/serialize failure is logged and dropped so the user's tool call still
+    // returns `continue:true` — the hook must never block the session.
+    match serde_json::to_string(&OutcomeLine {
         ts: now_ms(),
         kind: "tool_outcome",
         tool,
@@ -146,16 +149,26 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         hit_cap,
         prev_tool,
         prev_same_args,
-    })?;
-
-    let events_dir = home.join(EVENTS_SUBDIR);
-    let _ = fs::create_dir_all(&events_dir);
-    let events_path = events_dir.join(format!("{session_id}.jsonl"));
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&events_path)?;
-    writeln!(f, "{line}")?;
+    }) {
+        Ok(line) => {
+            let events_dir = home.join(EVENTS_SUBDIR);
+            let _ = fs::create_dir_all(&events_dir);
+            let events_path = events_dir.join(format!("{session_id}.jsonl"));
+            match fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&events_path)
+            {
+                Ok(mut f) => {
+                    if let Err(e) = writeln!(f, "{line}") {
+                        eprintln!("relaywash: observe append failed: {e}");
+                    }
+                }
+                Err(e) => eprintln!("relaywash: observe open failed: {e}"),
+            }
+        }
+        Err(e) => eprintln!("relaywash: observe serialize failed: {e}"),
+    }
 
     write_continue(out)
 }
@@ -201,7 +214,10 @@ mod tests {
         let raw = std::fs::read_to_string(&path).unwrap_or_default();
         raw.lines()
             .filter(|l| !l.is_empty())
-            .filter_map(|l| serde_json::from_str(l).ok())
+            .map(|l| {
+                serde_json::from_str(l)
+                    .unwrap_or_else(|e| panic!("invalid observe event JSON in {path:?}: {e}\nline: {l}"))
+            })
             .collect()
     }
 

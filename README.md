@@ -56,15 +56,6 @@ reads the Claude Code transcript directly — including each tool result's
 /relaywash-savings
 ```
 
-For benchmark PRs, opt into the `--measure` shadow-read mode:
-
-```
-RELAYWASH_MEASURE=1 claude
-```
-
-Each replacement-tool call writes a line to `${RELAYBURN_HOME}/measure/compare.jsonl`
-recording the replacement bytes vs the vanilla equivalent's bytes for offline analysis.
-
 ## Repository layout
 
 ```
@@ -82,7 +73,6 @@ crates/wash/           Rust source — the wash binary
   src/fuzzy.rs         whitespace + Unicode normalization for Edit matching
   src/search.rs        ripgrep-stack search (no shell-out to `rg`)
   src/walk.rs          .gitignore-aware file enumeration
-  src/burn/            native ledger writer (matches the JS stub format)
 packages/              per-platform npm packages — binaries injected by CI
   wash-darwin-arm64/
   wash-darwin-x64/
@@ -139,8 +129,8 @@ Hooks are Rust subcommands invoked through the launcher: `node bin/wash.mjs hook
 
 PR 7 lays the groundwork for per-repo tuning derived from observed tool-call patterns. Today it ships only the *substrate* — there's no aggregator yet, no profile gets written automatically, and no behavior changes:
 
-- **Observation hook.** `wash hook post-tool-observe` runs PostToolUse on every `mcp__relaywash__*`. It captures tuning-relevant args (counts, modes, runner/builder selectors), the result's byte size, a Search-specific `hitCap` flag, and `prevTool` / `prevSameArgs` from a per-session state file at `${RELAYBURN_HOME}/observe/<session>.json`. Sensitive fields (paths, file contents, search needles, edit text, PR bodies) are stripped via a per-tool allowlist before logging.
-- **session_summary.** The Stop hook now parses the transcript at `transcript_path` and emits a `session_summary` event with `cacheReadTokens`, `cacheCreationTokens`, `inputTokens`, `outputTokens`, and turn count — the inputs the future A/B comparison cares about.
+- **Observation hook.** `wash hook post-tool-observe` runs PostToolUse on every `mcp__relaywash__*`. It captures tuning-relevant args (counts, modes, runner/builder selectors), the result's byte size, a Search-specific `hitCap` flag, and `prevTool` / `prevSameArgs`. Events stream to `${RELAYBURN_HOME}/observe/<session>.jsonl`; per-session state lives at `${RELAYBURN_HOME}/observe-state/<session>.json`. Sensitive fields (paths, file contents, search needles, edit text, PR bodies) are stripped via a per-tool allowlist before logging. Writes are best-effort — any failure is logged and dropped so the hook never blocks the user's tool call.
+- **Stop-hook ingest.** On session end, the Stop hook calls `relayburn_sdk::ingest`, which reads the Claude Code transcript directly — including each tool result's `_meta: { replaces, collapsedCalls }` — and folds turn-level token totals (cache read/creation, input, output) into the SQLite ledger. Replaces the old in-tree `session_summary` event.
 - **Profile loader.** `src/profile.rs` reads `${RELAYBURN_HOME}/profiles/<repoKey>.json` (per-repo) or `_global.json`. The repo key is derived from the git remote URL (or cwd) hashed with FNV-1a for a filename-safe slug. `Search` and `Read` consult this profile for their applied defaults — but the JSON `inputSchema` the agent sees is byte-stable across profile values. An end-to-end integration test (`tools_list_is_byte_stable_across_profiles`) asserts that, protecting Anthropic's 5-min prompt cache from invalidation when the adaptive layer eventually starts tuning defaults.
 - **`settings.json`** carries a `wash.learning` block: `mode` (default `off`), `scope` (`per-repo`), `minObservations` (20), `experiment` (`false`). Defaults are conservative; the loader honors them once the aggregator lands.
 
