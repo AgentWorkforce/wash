@@ -37,21 +37,26 @@ pub fn tool() -> Tool {
         }),
         handler: Box::new(|args, _ctx| {
             let parsed = Args::parse(args)?;
-            let value = run(parsed)?;
-            Ok(ToolResult::new(
-                "relaywash__GitState",
-                value,
-                Some(Meta::new([format!("Bash:git-{}", op_label(args))], 1)),
-            ))
+            let op = parsed.op;
+            let mut value = run(parsed)?;
+            if let Value::Object(map) = &mut value {
+                map.insert(
+                    "_meta".into(),
+                    serde_json::to_value(Meta::new([format!("Bash:git-{}", op_label(op))], 1))?,
+                );
+            }
+            Ok(ToolResult::new("relaywash__GitState", value))
         }),
     }
 }
 
-fn op_label(args: &Value) -> String {
-    args.get("op")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?")
-        .to_string()
+fn op_label(op: Op) -> &'static str {
+    match op {
+        Op::Status => "status",
+        Op::Diff => "diff",
+        Op::Log => "log",
+        Op::Show => "show",
+    }
 }
 
 #[derive(Debug)]

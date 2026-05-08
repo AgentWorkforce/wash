@@ -87,11 +87,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         }
     };
     out.insert("_meta".into(), serde_json::to_value(&meta)?);
-    Ok(ToolResult::new(
-        "relaywash__GhPR",
-        Value::Object(out),
-        Some(meta),
-    ))
+    Ok(ToolResult::new("relaywash__GhPR", Value::Object(out)))
 }
 
 fn gh(cwd: &std::path::Path, args: &[&str]) -> Result<String> {

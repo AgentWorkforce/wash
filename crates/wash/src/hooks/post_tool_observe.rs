@@ -1,27 +1,30 @@
 //! PostToolUse on every `mcp__relaywash__*` — wash#13 layer 1 (observation, always-on).
 //!
-//! Captures arg/outcome data into the burn ledger so a future aggregator can derive
-//! per-repo tuning without observation requiring its own behavior change. Sensitive
-//! fields (paths, file contents, search needles, edit text, PR bodies) are NOT logged —
-//! only tuning-relevant args (counts, modes, runner/builder selectors) and the result's
-//! byte size + a few derived signals.
+//! Captures arg/outcome data into a wash-local JSONL log so a future aggregator can
+//! derive per-repo tuning without observation requiring its own behavior change.
+//! Sensitive fields (paths, file contents, search needles, edit text, PR bodies) are
+//! NOT logged — only tuning-relevant args (counts, modes, runner/builder selectors)
+//! and the result's byte size + a few derived signals.
+//!
+//! These events are wash's own observability surface; relayburn-sdk does not read them.
+//! They live under `${RELAYBURN_HOME}/observe/<sessionId>.jsonl`.
 
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{sanitize_session_id, write_continue};
-use crate::burn::Ledger;
 use crate::profile::{ledger_home, pick_fields};
 
-const SESSION_STATE_DIR: &str = "observe";
+const STATE_SUBDIR: &str = "observe-state";
+const EVENTS_SUBDIR: &str = "observe";
 
 /// Allowlist of per-tool args that matter for tuning. Anything else is dropped to
-/// keep the ledger free of user content.
+/// keep the log free of user content.
 fn allowed_args(tool: &str) -> &'static [&'static str] {
     match tool {
         "Search" => &["maxResults", "contextLines", "rank"],
@@ -60,15 +63,11 @@ struct SessionState {
 }
 
 pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
-    run_with(&Ledger::default(), &observe_dir(), payload, out)
+    let home = ledger_home();
+    run_with(&home, payload, out)
 }
 
-fn run_with(
-    ledger: &Ledger,
-    state_dir: &Path,
-    payload: &Value,
-    out: &mut impl Write,
-) -> Result<()> {
+fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
     let raw_session = payload
         .get("session_id")
         .or_else(|| payload.get("sessionId"))
@@ -80,7 +79,7 @@ fn run_with(
         .or_else(|| payload.get("toolName"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    // Strip the `mcp__relaywash__` prefix if present so the ledger uses bare tool names.
+    // Strip the `mcp__relaywash__` prefix if present so the log uses bare tool names.
     let tool = tool_name_full
         .strip_prefix("mcp__relaywash__")
         .or_else(|| tool_name_full.strip_prefix("relaywash__"))
@@ -112,7 +111,10 @@ fn run_with(
     let hit_cap = compute_hit_cap(tool, &raw_args, &response);
 
     // Read previous tool/args for this session, then update.
-    fs::create_dir_all(state_dir).ok();
+    let state_dir = home.join(STATE_SUBDIR);
+    if let Err(e) = fs::create_dir_all(&state_dir) {
+        eprintln!("relaywash: observe state dir create failed ({}): {e}", state_dir.display());
+    }
     let state_path = state_dir.join(format!("{session_id}.json"));
     let prev: SessionState = fs::read_to_string(&state_path)
         .ok()
@@ -132,12 +134,24 @@ fn run_with(
         last_tool: Some(tool.to_string()),
         last_args: Some(safe_args.clone()),
     };
-    let _ = fs::write(
-        &state_path,
-        serde_json::to_string(&new_state).unwrap_or_default(),
-    );
+    match serde_json::to_string(&new_state) {
+        Ok(state_json) => {
+            if let Err(e) = fs::write(&state_path, state_json) {
+                eprintln!(
+                    "relaywash: observe state write failed (session={session_id}, path={}): {e}",
+                    state_path.display()
+                );
+            }
+        }
+        Err(e) => eprintln!(
+            "relaywash: observe state serialize failed (session={session_id}): {e}"
+        ),
+    }
 
-    let line = serde_json::to_string(&OutcomeLine {
+    // Best-effort from here down: the observe hook is telemetry, not user-visible work.
+    // Any write/serialize failure is logged and dropped so the user's tool call still
+    // returns `continue:true` — the hook must never block the session.
+    match serde_json::to_string(&OutcomeLine {
         ts: now_ms(),
         kind: "tool_outcome",
         tool,
@@ -146,17 +160,31 @@ fn run_with(
         hit_cap,
         prev_tool,
         prev_same_args,
-    })?;
-    let session_path = ledger
-        .home()
-        .join("sessions")
-        .join(format!("{session_id}.jsonl"));
-    let _ = fs::create_dir_all(session_path.parent().unwrap());
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&session_path)?;
-    writeln!(f, "{line}")?;
+    }) {
+        Ok(line) => {
+            let events_dir = home.join(EVENTS_SUBDIR);
+            if let Err(e) = fs::create_dir_all(&events_dir) {
+                eprintln!(
+                    "relaywash: observe events dir create failed ({}): {e}",
+                    events_dir.display()
+                );
+            }
+            let events_path = events_dir.join(format!("{session_id}.jsonl"));
+            match fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&events_path)
+            {
+                Ok(mut f) => {
+                    if let Err(e) = writeln!(f, "{line}") {
+                        eprintln!("relaywash: observe append failed: {e}");
+                    }
+                }
+                Err(e) => eprintln!("relaywash: observe open failed: {e}"),
+            }
+        }
+        Err(e) => eprintln!("relaywash: observe serialize failed: {e}"),
+    }
 
     write_continue(out)
 }
@@ -176,10 +204,6 @@ fn compute_hit_cap(tool: &str, args: &Value, response: &Value) -> Option<bool> {
     n.map(|count| count >= cap)
 }
 
-fn observe_dir() -> PathBuf {
-    ledger_home().join(SESSION_STATE_DIR)
-}
-
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -193,35 +217,46 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
 
-    fn drive(payload: Value, ledger: &Ledger, state_dir: &Path) -> String {
+    fn drive(payload: Value, home: &Path) -> String {
         let mut buf = Vec::new();
-        run_with(ledger, state_dir, &payload, &mut buf).unwrap();
+        run_with(home, &payload, &mut buf).unwrap();
         String::from_utf8(buf).unwrap()
+    }
+
+    fn read_events(home: &Path, session_id: &str) -> Vec<Value> {
+        let path = home
+            .join(EVENTS_SUBDIR)
+            .join(format!("{session_id}.jsonl"));
+        let raw = std::fs::read_to_string(&path).unwrap_or_default();
+        raw.lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| {
+                serde_json::from_str(l)
+                    .unwrap_or_else(|e| panic!("invalid observe event JSON in {path:?}: {e}\nline: {l}"))
+            })
+            .collect()
     }
 
     #[test]
     fn writes_tool_outcome_event_with_redacted_args() {
         let tmp = TempDir::new().unwrap();
-        let l = Ledger::new(tmp.path());
-        let state_dir = tmp.path().join("observe");
         let s = drive(
             json!({
                 "session_id": "s1",
                 "tool_name": "mcp__relaywash__Search",
                 "tool_input": {
-                    "content": "API_KEY",  // sensitive — must be dropped
-                    "paths": ["src/secrets.ts"],  // sensitive — dropped
+                    "content": "API_KEY",
+                    "paths": ["src/secrets.ts"],
                     "maxResults": 50,
                     "contextLines": 2,
                     "rank": "matches"
                 },
                 "tool_response": {"results": [{},{},{},{},{}]}
             }),
-            &l,
-            &state_dir,
+            tmp.path(),
         );
         assert!(s.contains("\"continue\":true"));
-        let events = l.read_session("s1");
+        let events = read_events(tmp.path(), "s1");
         assert_eq!(events.len(), 1);
         let ev = &events[0];
         assert_eq!(ev["kind"], "tool_outcome");
@@ -235,8 +270,6 @@ mod tests {
     #[test]
     fn hit_cap_true_when_results_meet_max() {
         let tmp = TempDir::new().unwrap();
-        let l = Ledger::new(tmp.path());
-        let state_dir = tmp.path().join("observe");
         drive(
             json!({
                 "session_id": "s2",
@@ -244,18 +277,15 @@ mod tests {
                 "tool_input": {"maxResults": 3, "rank": "matches"},
                 "tool_response": {"results": [{},{},{}]}
             }),
-            &l,
-            &state_dir,
+            tmp.path(),
         );
-        let events = l.read_session("s2");
+        let events = read_events(tmp.path(), "s2");
         assert_eq!(events[0]["hitCap"], true);
     }
 
     #[test]
     fn hit_cap_absent_for_non_search() {
         let tmp = TempDir::new().unwrap();
-        let l = Ledger::new(tmp.path());
-        let state_dir = tmp.path().join("observe");
         drive(
             json!({
                 "session_id": "s3",
@@ -263,27 +293,24 @@ mod tests {
                 "tool_input": {"path": "/foo", "mode": "signatures"},
                 "tool_response": {"content": "..."}
             }),
-            &l,
-            &state_dir,
+            tmp.path(),
         );
-        let events = l.read_session("s3");
+        let events = read_events(tmp.path(), "s3");
         assert!(events[0].get("hitCap").map(|v| v.is_null()).unwrap_or(true));
     }
 
     #[test]
     fn prev_same_args_detected() {
         let tmp = TempDir::new().unwrap();
-        let l = Ledger::new(tmp.path());
-        let state_dir = tmp.path().join("observe");
         let payload = json!({
             "session_id": "s4",
             "tool_name": "mcp__relaywash__Search",
             "tool_input": {"maxResults": 10, "rank": "matches", "contextLines": 2},
             "tool_response": {"results": []}
         });
-        drive(payload.clone(), &l, &state_dir);
-        drive(payload, &l, &state_dir);
-        let events = l.read_session("s4");
+        drive(payload.clone(), tmp.path());
+        drive(payload, tmp.path());
+        let events = read_events(tmp.path(), "s4");
         assert_eq!(events.len(), 2);
         assert!(events[0].get("prevTool").map(|v| v.is_null()).unwrap_or(true));
         assert_eq!(events[1]["prevTool"], "Search");

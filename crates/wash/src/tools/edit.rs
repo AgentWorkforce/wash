@@ -118,7 +118,6 @@ fn run(args: &Value) -> Result<ToolResult> {
             "results": results,
             "_meta": Meta::new(["Edit".to_string()], total as u32),
         }),
-        Some(Meta::new(["Edit".to_string()], total as u32)),
     ))
 }
 

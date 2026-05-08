@@ -3,8 +3,6 @@ use serde_json::{Value, json};
 use std::cell::Cell;
 use std::io::{Read, Write};
 
-use crate::meta::Meta;
-
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 pub type ToolHandler = Box<dyn Fn(&Value, &ToolContext) -> Result<ToolResult> + Send + Sync>;
@@ -23,27 +21,22 @@ pub struct ToolContext {
 pub struct ToolResult {
     pub tool_name: String,
     pub value: Value,
-    pub meta: Option<Meta>,
 }
 
 impl ToolResult {
-    pub fn new(tool_name: impl Into<String>, value: Value, meta: Option<Meta>) -> Self {
-        Self { tool_name: tool_name.into(), value, meta }
+    pub fn new(tool_name: impl Into<String>, value: Value) -> Self {
+        Self { tool_name: tool_name.into(), value }
     }
 }
-
-pub type PostCall = Box<dyn Fn(&ToolResult) + Send + Sync>;
 
 pub struct McpServer {
     name: String,
     version: String,
     tools: Vec<Tool>,
-    post_call: Option<PostCall>,
     session_id: Option<String>,
     /// Set by `dispatch` when an `shutdown`/`exit` request arrives. The run loop checks
-    /// this between frames and returns Ok(()) so Drops fire and any buffered ledger
-    /// state is flushed via normal scope exit (rather than `process::exit` which skips
-    /// destructors).
+    /// this between frames and returns Ok(()) so destructors run via normal scope exit
+    /// (rather than `process::exit`, which skips them).
     shutdown: Cell<bool>,
 }
 
@@ -53,7 +46,6 @@ impl McpServer {
             name: name.into(),
             version: version.into(),
             tools: Vec::new(),
-            post_call: None,
             session_id: std::env::var("CLAUDE_SESSION_ID").ok(),
             shutdown: Cell::new(false),
         }
@@ -61,10 +53,6 @@ impl McpServer {
 
     pub fn register(&mut self, tool: Tool) {
         self.tools.push(tool);
-    }
-
-    pub fn set_post_call(&mut self, f: PostCall) {
-        self.post_call = Some(f);
     }
 
     pub fn run(self) -> Result<()> {
@@ -174,9 +162,6 @@ impl McpServer {
                     .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
                 let ctx = ToolContext { session_id: self.session_id.clone() };
                 let out = (tool.handler)(&args, &ctx)?;
-                if let Some(cb) = &self.post_call {
-                    cb(&out);
-                }
                 Ok(Some(format_tool_result(&out)))
             }
             "ping" => Ok(Some(json!({}))),

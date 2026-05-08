@@ -82,8 +82,8 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": "",
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -107,8 +107,8 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": slice,
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -119,8 +119,8 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": text,
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -135,8 +135,8 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
                 "content": text,
                 "truncated": false,
                 "languageDetected": language.as_str(),
+                "_meta": Meta::new(["Read".to_string()], 1),
             }),
-            Some(Meta::new(["Read".to_string()], 1)),
         ));
     }
 
@@ -158,8 +158,8 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
             "truncated": true,
             "languageDetected": language.as_str(),
             "lineMap": sigs.line_map,
+            "_meta": Meta::new(["Read".to_string()], 1),
         }),
-        Some(Meta::new(["Read".to_string()], 1)),
     ))
 }
 
