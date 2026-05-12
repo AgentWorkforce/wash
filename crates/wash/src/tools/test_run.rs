@@ -106,11 +106,17 @@ fn run(args: &Value) -> Result<ToolResult> {
     let t0 = Instant::now();
     let out = Command::new(&cmd[0]).args(&cmd[1..]).current_dir(&cwd).output();
     let duration = t0.elapsed().as_millis() as u64;
-    let (stdout, stderr) = match out {
-        Ok(o) => (
-            String::from_utf8_lossy(&o.stdout).into_owned(),
-            String::from_utf8_lossy(&o.stderr).into_owned(),
-        ),
+    let (stdout, stderr, baseline) = match out {
+        Ok(o) => {
+            // Baseline is the raw byte count the agent would have paid for, computed
+            // from the original stdout/stderr so lossy UTF-8 decoding can't skew it.
+            let baseline = (o.stdout.len() + o.stderr.len()) as u64;
+            (
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+                baseline,
+            )
+        }
         Err(e) => {
             return ok_value(json!({
                 "runner": runner,
@@ -126,7 +132,6 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
     let raw = format!("{stdout}{stderr}");
     let log_path = crate::tools::build::write_log("testrun", &raw).ok();
-    let baseline = raw.len() as u64;
 
     let parsed = parse_runner_output(&runner, &raw);
     let failures: Vec<Failure> = if failures_only {

@@ -79,12 +79,19 @@ fn run(args: &Value) -> Result<ToolResult> {
     let t0 = Instant::now();
     let out = Command::new(&cmd[0]).args(&cmd[1..]).current_dir(&cwd).output();
     let duration = t0.elapsed().as_millis() as u64;
-    let (stdout, stderr, status_code) = match out {
-        Ok(o) => (
-            String::from_utf8_lossy(&o.stdout).into_owned(),
-            String::from_utf8_lossy(&o.stderr).into_owned(),
-            o.status.code(),
-        ),
+    let (stdout, stderr, status_code, baseline) = match out {
+        Ok(o) => {
+            // Baseline is the raw byte count the agent would have paid for. Compute it
+            // from the original stdout/stderr (plus the "\n" we stitch in below) so
+            // that lossy UTF-8 decoding can't drift the savings estimate.
+            let baseline = (o.stdout.len() + 1 + o.stderr.len()) as u64;
+            (
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+                o.status.code(),
+                baseline,
+            )
+        }
         Err(e) => {
             return ok_value(json!({
                 "builder": builder,
@@ -97,7 +104,6 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
     let raw = format!("{stdout}\n{stderr}");
     let log_path = write_log("build", &raw).ok();
-    let baseline = raw.len() as u64;
 
     let success = status_code == Some(0);
     if success {
