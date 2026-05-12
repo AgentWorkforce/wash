@@ -2,8 +2,12 @@
 
 use serde_json::{Value, json};
 use std::io::{Read, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use wash::mcp::{ToolContext, format_tool_result};
+use wash::tools;
 
 fn frame(msg: &Value) -> Vec<u8> {
     let body = serde_json::to_vec(msg).unwrap();
@@ -116,6 +120,74 @@ fn list_tools_with_env(bin: &str, envs: &[(&str, String)]) -> serde_json::Value 
     drop(stdin);
     let _ = child.wait();
     list["result"].clone()
+}
+
+/// Acceptance test for issue #30: every relaywash tool must emit `_meta` in both the
+/// structured response and the visible text block. Tools whose handlers shell out (Build,
+/// TestRun) are exercised through error paths so the test stays hermetic.
+#[test]
+fn every_core_tool_emits_meta() {
+    let all = tools::all();
+    let find = |name: &str| {
+        all.iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("missing tool {name}"))
+    };
+    let ctx = ToolContext { session_id: Some("meta-test".into()) };
+
+    // Search
+    let search = find("relaywash__Search");
+    let res = (search.handler)(&json!({"paths": ["**/*.toml"], "maxResults": 1}), &ctx).unwrap();
+    assert_meta(&res, &["Glob"]);
+
+    // Read (small file inside this crate)
+    let read = find("relaywash__Read");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let res = (read.handler)(&json!({"path": path.to_string_lossy()}), &ctx).unwrap();
+    assert_meta(&res, &["Read"]);
+
+    // GitState (status of this very repo — guaranteed to be a git worktree under test)
+    let git_state = find("relaywash__GitState");
+    let res = (git_state.handler)(&json!({"op": "log", "maxFiles": 1}), &ctx).unwrap();
+    assert_meta(&res, &["Bash:git-log"]);
+
+    // Build — invoke with an unknown builder so we hit the no-command error path without
+    // spawning a real toolchain.
+    let build = find("relaywash__Build");
+    let res = (build.handler)(&json!({"builder": "unknown-builder"}), &ctx).unwrap();
+    assert_meta(&res, &["Bash:build"]);
+
+    // TestRun — same idea: the `getFailureLog` branch reads a tmp dir and returns a
+    // structured `{"found": false}` without spawning a runner.
+    let test_run = find("relaywash__TestRun");
+    let res =
+        (test_run.handler)(&json!({"getFailureLog": "definitely-not-a-real-test-name"}), &ctx)
+            .unwrap();
+    assert_meta(&res, &["Bash:test"]);
+}
+
+/// Assert that the formatter injects `_meta` into both `structuredContent` and the visible
+/// text block, with the expected `replaces` entries and the central `schemaVersion`/
+/// `responseBytes` fields populated.
+fn assert_meta(res: &wash::mcp::ToolResult, expected_replaces: &[&str]) {
+    let formatted = format_tool_result(res);
+    let structured_meta = &formatted["structuredContent"]["_meta"];
+    assert!(structured_meta.is_object(), "structured _meta missing");
+    let replaces: Vec<&str> = structured_meta["replaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    for r in expected_replaces {
+        assert!(replaces.contains(r), "expected replaces to contain {r}, got {replaces:?}");
+    }
+    assert!(structured_meta["responseBytes"].as_u64().unwrap() > 0);
+    assert!(structured_meta["schemaVersion"].as_u64().unwrap() >= 1);
+
+    let text = formatted["content"][0]["text"].as_str().unwrap();
+    let parsed: Value = serde_json::from_str(text).unwrap();
+    assert!(parsed.get("_meta").is_some(), "text block missing _meta");
 }
 
 #[test]

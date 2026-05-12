@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -77,17 +77,8 @@ fn run(args: &Value) -> Result<ToolResult> {
         "comments" => comments(&cwd, args)?,
         _ => unreachable!(),
     };
-    let meta = Meta::new([replaces.to_string()], 1);
-    let mut out = match value {
-        Value::Object(o) => o,
-        other => {
-            let mut m = Map::new();
-            m.insert("data".into(), other);
-            m
-        }
-    };
-    out.insert("_meta".into(), serde_json::to_value(&meta)?);
-    Ok(ToolResult::new("relaywash__GhPR", Value::Object(out)))
+    Ok(ToolResult::new("relaywash__GhPR", value)
+        .with_meta(Meta::new([replaces.to_string()], 1)))
 }
 
 fn gh(cwd: &std::path::Path, args: &[&str]) -> Result<String> {

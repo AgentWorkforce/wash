@@ -1,7 +1,9 @@
 use anyhow::{Context, Result, anyhow};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::cell::Cell;
 use std::io::{Read, Write};
+
+use crate::meta::Meta;
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -21,11 +23,21 @@ pub struct ToolContext {
 pub struct ToolResult {
     pub tool_name: String,
     pub value: Value,
+    /// Tool-supplied annotation. The MCP formatter injects this as `_meta` into both the
+    /// structured response and the visible text block, computing `responseBytes` along the
+    /// way. Carrying `Meta` here (rather than embedding it directly in `value`) keeps the
+    /// shape consistent across tools and lets the ledger record it without re-parsing JSON.
+    pub meta: Option<Meta>,
 }
 
 impl ToolResult {
     pub fn new(tool_name: impl Into<String>, value: Value) -> Self {
-        Self { tool_name: tool_name.into(), value }
+        Self { tool_name: tool_name.into(), value, meta: None }
+    }
+
+    pub fn with_meta(mut self, meta: Meta) -> Self {
+        self.meta = Some(meta);
+        self
     }
 }
 
@@ -174,15 +186,42 @@ impl McpServer {
     }
 }
 
-fn format_tool_result(r: &ToolResult) -> Value {
+pub fn format_tool_result(r: &ToolResult) -> Value {
     // The model reads `content[].text`. Use compact JSON — pretty-printing roughly
     // doubles the whitespace tokens for nested results, which defeats the whole point
     // of this server. Hosts that prefer a parsed view read `structuredContent`.
-    let text = serde_json::to_string(&r.value).unwrap_or_else(|_| "{}".into());
+    let value = inject_meta(r.value.clone(), r.meta.as_ref());
+    let text = serde_json::to_string(&value).unwrap_or_else(|_| "{}".into());
     json!({
         "content": [{"type": "text", "text": text}],
-        "structuredContent": r.value,
+        "structuredContent": value,
     })
+}
+
+/// Inject `_meta` into the structured response. Scalar/array values are wrapped under a
+/// `data` key so `_meta` can sit alongside; objects are mutated in place.
+///
+/// `responseBytes` is the compact-JSON size of the payload *excluding* `_meta` itself,
+/// so it reflects the bytes a model actually pays for. Computing it here means tools
+/// cannot drift.
+fn inject_meta(value: Value, meta: Option<&Meta>) -> Value {
+    let Some(meta) = meta else { return value };
+    let mut wrapped = match value {
+        Value::Object(map) => map,
+        other => {
+            let mut m = Map::new();
+            m.insert("data".into(), other);
+            m
+        }
+    };
+    let response_bytes = serde_json::to_vec(&Value::Object(wrapped.clone()))
+        .map(|v| v.len() as u64)
+        .unwrap_or(0);
+    let mut meta = meta.clone();
+    meta.response_bytes = Some(response_bytes);
+    let meta_value = serde_json::to_value(&meta).unwrap_or(Value::Null);
+    wrapped.insert("_meta".into(), meta_value);
+    Value::Object(wrapped)
 }
 
 fn send(writer: &mut impl Write, payload: &Value) -> Result<()> {
@@ -261,6 +300,40 @@ mod tests {
         assert!(take_framed_message(&mut buf).is_none());
         let body = take_framed_message(&mut buf).expect("recover after bad header");
         assert_eq!(body, b"hello");
+    }
+
+    #[test]
+    fn formatter_injects_meta_into_object_value() {
+        let r = ToolResult::new("relaywash__Demo", json!({"ok": true}))
+            .with_meta(Meta::new(["Read".to_string()], 1));
+        let out = format_tool_result(&r);
+        let structured = &out["structuredContent"];
+        let meta = &structured["_meta"];
+        assert_eq!(meta["replaces"], json!(["Read"]));
+        assert_eq!(meta["collapsedCalls"], 1);
+        assert_eq!(meta["schemaVersion"], crate::meta::SCHEMA_VERSION);
+        assert!(meta["responseBytes"].as_u64().unwrap() > 0);
+
+        let text = out["content"][0]["text"].as_str().unwrap();
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["_meta"]["schemaVersion"], crate::meta::SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn formatter_wraps_non_object_value_under_data() {
+        let r = ToolResult::new("relaywash__Demo", json!(["a", "b"]))
+            .with_meta(Meta::new(["Read".to_string()], 1));
+        let out = format_tool_result(&r);
+        let structured = &out["structuredContent"];
+        assert_eq!(structured["data"], json!(["a", "b"]));
+        assert!(structured["_meta"].is_object());
+    }
+
+    #[test]
+    fn formatter_passthrough_when_meta_absent() {
+        let r = ToolResult::new("relaywash__Demo", json!({"ok": true}));
+        let out = format_tool_result(&r);
+        assert!(out["structuredContent"]["_meta"].is_null());
     }
 
     #[test]

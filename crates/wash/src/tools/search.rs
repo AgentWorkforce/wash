@@ -110,9 +110,9 @@ fn run(args: &Value) -> Result<ToolResult> {
     let value = json!({
         "results": results,
         "truncated": truncated,
-        "_meta": Meta::new(replaces.iter().map(|s| s.to_string()), collapsed),
     });
-    Ok(ToolResult::new("relaywash__Search", value))
+    Ok(ToolResult::new("relaywash__Search", value)
+        .with_meta(Meta::new(replaces.iter().map(|s| s.to_string()), collapsed)))
 }
 
 fn rank_results(mut results: Vec<SearchHit>, mode: &str, cwd: &std::path::Path) -> Vec<SearchHit> {

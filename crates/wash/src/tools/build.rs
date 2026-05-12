@@ -73,7 +73,6 @@ fn run(args: &Value) -> Result<ToolResult> {
             "duration": 0,
             "errorTail": format!("no command for builder: {builder}"),
             "fullLogPath": Value::Null,
-            "_meta": Meta::new(["Bash:build".to_string()], 1),
         }));
     };
 
@@ -93,7 +92,6 @@ fn run(args: &Value) -> Result<ToolResult> {
                 "duration": duration,
                 "errorTail": format!("spawn {} failed: {}", cmd[0], e),
                 "fullLogPath": Value::Null,
-                "_meta": Meta::new(["Bash:build".to_string()], 1),
             }));
         }
     };
@@ -103,39 +101,42 @@ fn run(args: &Value) -> Result<ToolResult> {
 
     let success = status_code == Some(0);
     if success {
-        return ok_value(json!({
+        return ok_value_with_baseline(json!({
             "builder": builder,
             "success": true,
             "duration": duration,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            "_meta": Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline),
-        }));
+        }), baseline);
     }
 
     let errors = parse_errors(&builder, &raw);
     if !errors.is_empty() {
-        return ok_value(json!({
+        return ok_value_with_baseline(json!({
             "builder": builder,
             "success": false,
             "duration": duration,
             "errors": errors,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            "_meta": Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline),
-        }));
+        }), baseline);
     }
     let tail = tail_lines_of(&raw, tail_lines);
-    ok_value(json!({
+    ok_value_with_baseline(json!({
         "builder": builder,
         "success": false,
         "duration": duration,
         "errorTail": tail,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        "_meta": Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline),
-    }))
+    }), baseline)
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__Build", value))
+    Ok(ToolResult::new("relaywash__Build", value)
+        .with_meta(Meta::new(["Bash:build".to_string()], 1)))
+}
+
+fn ok_value_with_baseline(value: Value, baseline: u64) -> Result<ToolResult> {
+    Ok(ToolResult::new("relaywash__Build", value)
+        .with_meta(Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline)))
 }
 
 fn detect_builder(cwd: &Path) -> String {
