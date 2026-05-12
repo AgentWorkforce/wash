@@ -19,10 +19,8 @@ pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
 }
 
 fn run_ingest() -> Result<()> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    rt.block_on(async { ingest(IngestOptions::default()).await })?;
+    // `relayburn_sdk::ingest` became synchronous in 2.8.5 — no runtime needed.
+    ingest(IngestOptions::default())?;
     Ok(())
 }
 

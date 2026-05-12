@@ -19,9 +19,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{sanitize_session_id, write_continue};
 use crate::profile::{ledger_home, pick_fields};
+use crate::tokens::estimate_tokens;
 
 const STATE_SUBDIR: &str = "observe-state";
 const EVENTS_SUBDIR: &str = "observe";
+const METRICS_SCHEMA_VERSION: u32 = 1;
 
 /// Allowlist of per-tool args that matter for tuning. Anything else is dropped to
 /// keep the log free of user content.
@@ -52,6 +54,30 @@ struct OutcomeLine<'a> {
     prev_tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "prevSameArgs")]
     prev_same_args: Option<bool>,
+}
+
+/// Per-call savings event used by the adaptive learning layer. Schema versioned
+/// from the start so future fields (compression-ratio buckets, follow-up flags,
+/// etc.) can be added without breaking downstream consumers.
+#[derive(Serialize)]
+struct MetricsLine<'a> {
+    ts: u128,
+    kind: &'a str,
+    tool: &'a str,
+    #[serde(rename = "schemaVersion")]
+    schema_version: u32,
+    #[serde(rename = "resultBytes")]
+    result_bytes: u64,
+    #[serde(rename = "resultTokens")]
+    result_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "baselineBytes")]
+    baseline_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "baselineTokens")]
+    baseline_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "estimatedSavedTokens")]
+    estimated_saved_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "hitCap")]
+    hit_cap: Option<bool>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Default)]
@@ -151,8 +177,27 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
     // Best-effort from here down: the observe hook is telemetry, not user-visible work.
     // Any write/serialize failure is logged and dropped so the user's tool call still
     // returns `continue:true` — the hook must never block the session.
-    match serde_json::to_string(&OutcomeLine {
-        ts: now_ms(),
+    let events_dir = home.join(EVENTS_SUBDIR);
+    if let Err(e) = fs::create_dir_all(&events_dir) {
+        eprintln!(
+            "relaywash: observe events dir create failed ({}): {e}",
+            events_dir.display()
+        );
+    }
+    let events_path = events_dir.join(format!("{session_id}.jsonl"));
+
+    let baseline_bytes = response
+        .get("_meta")
+        .and_then(|m| m.get("baselineBytes"))
+        .and_then(|v| v.as_u64());
+    let result_bytes_u64 = result_bytes as u64;
+    let result_tokens = estimate_tokens(result_bytes_u64);
+    let baseline_tokens = baseline_bytes.map(estimate_tokens);
+    let estimated_saved_tokens = baseline_tokens.map(|b| b.saturating_sub(result_tokens));
+
+    let ts = now_ms();
+    let outcome = OutcomeLine {
+        ts,
         kind: "tool_outcome",
         tool,
         args: &safe_args,
@@ -160,33 +205,51 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         hit_cap,
         prev_tool,
         prev_same_args,
-    }) {
-        Ok(line) => {
-            let events_dir = home.join(EVENTS_SUBDIR);
-            if let Err(e) = fs::create_dir_all(&events_dir) {
-                eprintln!(
-                    "relaywash: observe events dir create failed ({}): {e}",
-                    events_dir.display()
-                );
-            }
-            let events_path = events_dir.join(format!("{session_id}.jsonl"));
-            match fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&events_path)
-            {
-                Ok(mut f) => {
-                    if let Err(e) = writeln!(f, "{line}") {
-                        eprintln!("relaywash: observe append failed: {e}");
-                    }
-                }
-                Err(e) => eprintln!("relaywash: observe open failed: {e}"),
-            }
-        }
-        Err(e) => eprintln!("relaywash: observe serialize failed: {e}"),
-    }
+    };
+    let metrics = MetricsLine {
+        ts,
+        kind: "tool_metrics",
+        tool,
+        schema_version: METRICS_SCHEMA_VERSION,
+        result_bytes: result_bytes_u64,
+        result_tokens,
+        baseline_bytes,
+        baseline_tokens,
+        estimated_saved_tokens,
+        hit_cap,
+    };
+    append_events(&events_path, &outcome, &metrics);
 
     write_continue(out)
+}
+
+fn append_events<T: Serialize, U: Serialize>(events_path: &Path, first: &T, second: &U) {
+    let line1 = match serde_json::to_string(first) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("relaywash: observe serialize failed: {e}");
+            return;
+        }
+    };
+    let line2 = match serde_json::to_string(second) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("relaywash: observe serialize failed: {e}");
+            return;
+        }
+    };
+    match fs::OpenOptions::new().create(true).append(true).open(events_path) {
+        Ok(mut f) => {
+            if let Err(e) = writeln!(f, "{line1}") {
+                eprintln!("relaywash: observe append failed: {e}");
+                return;
+            }
+            if let Err(e) = writeln!(f, "{line2}") {
+                eprintln!("relaywash: observe append failed: {e}");
+            }
+        }
+        Err(e) => eprintln!("relaywash: observe open failed: {e}"),
+    }
 }
 
 fn compute_hit_cap(tool: &str, args: &Value, response: &Value) -> Option<bool> {
@@ -237,6 +300,14 @@ mod tests {
             .collect()
     }
 
+    fn outcomes(events: &[Value]) -> Vec<&Value> {
+        events.iter().filter(|e| e["kind"] == "tool_outcome").collect()
+    }
+
+    fn metrics(events: &[Value]) -> Vec<&Value> {
+        events.iter().filter(|e| e["kind"] == "tool_metrics").collect()
+    }
+
     #[test]
     fn writes_tool_outcome_event_with_redacted_args() {
         let tmp = TempDir::new().unwrap();
@@ -257,9 +328,9 @@ mod tests {
         );
         assert!(s.contains("\"continue\":true"));
         let events = read_events(tmp.path(), "s1");
-        assert_eq!(events.len(), 1);
-        let ev = &events[0];
-        assert_eq!(ev["kind"], "tool_outcome");
+        let outcomes = outcomes(&events);
+        assert_eq!(outcomes.len(), 1);
+        let ev = outcomes[0];
         assert_eq!(ev["tool"], "Search");
         assert_eq!(ev["args"]["maxResults"], 50);
         assert!(ev["args"].get("content").is_none(), "content must be redacted");
@@ -280,7 +351,8 @@ mod tests {
             tmp.path(),
         );
         let events = read_events(tmp.path(), "s2");
-        assert_eq!(events[0]["hitCap"], true);
+        assert_eq!(outcomes(&events)[0]["hitCap"], true);
+        assert_eq!(metrics(&events)[0]["hitCap"], true);
     }
 
     #[test]
@@ -296,7 +368,7 @@ mod tests {
             tmp.path(),
         );
         let events = read_events(tmp.path(), "s3");
-        assert!(events[0].get("hitCap").map(|v| v.is_null()).unwrap_or(true));
+        assert!(outcomes(&events)[0].get("hitCap").map(|v| v.is_null()).unwrap_or(true));
     }
 
     #[test]
@@ -311,9 +383,132 @@ mod tests {
         drive(payload.clone(), tmp.path());
         drive(payload, tmp.path());
         let events = read_events(tmp.path(), "s4");
-        assert_eq!(events.len(), 2);
-        assert!(events[0].get("prevTool").map(|v| v.is_null()).unwrap_or(true));
-        assert_eq!(events[1]["prevTool"], "Search");
-        assert_eq!(events[1]["prevSameArgs"], true);
+        let outs = outcomes(&events);
+        assert_eq!(outs.len(), 2);
+        assert!(outs[0].get("prevTool").map(|v| v.is_null()).unwrap_or(true));
+        assert_eq!(outs[1]["prevTool"], "Search");
+        assert_eq!(outs[1]["prevSameArgs"], true);
+    }
+
+    #[test]
+    fn tool_metrics_event_shape_and_token_estimate() {
+        let tmp = TempDir::new().unwrap();
+        drive(
+            json!({
+                "session_id": "m1",
+                "tool_name": "mcp__relaywash__Search",
+                "tool_input": {"maxResults": 50, "rank": "matches"},
+                "tool_response": {"results": [{"path":"a.ts","snippet":"x"}]}
+            }),
+            tmp.path(),
+        );
+        let events = read_events(tmp.path(), "m1");
+        let m = metrics(&events);
+        assert_eq!(m.len(), 1, "exactly one tool_metrics per call");
+        let ev = m[0];
+        assert_eq!(ev["kind"], "tool_metrics");
+        assert_eq!(ev["tool"], "Search");
+        assert_eq!(ev["schemaVersion"], 1);
+        let rb = ev["resultBytes"].as_u64().unwrap();
+        let rt = ev["resultTokens"].as_u64().unwrap();
+        assert!(rb > 0);
+        assert_eq!(rt, rb.div_ceil(4));
+        assert!(ev.get("baselineBytes").map(|v| v.is_null()).unwrap_or(true));
+        assert!(ev.get("estimatedSavedTokens").map(|v| v.is_null()).unwrap_or(true));
+    }
+
+    #[test]
+    fn tool_metrics_includes_baseline_when_meta_provides_it() {
+        let tmp = TempDir::new().unwrap();
+        drive(
+            json!({
+                "session_id": "m2",
+                "tool_name": "mcp__relaywash__Read",
+                "tool_input": {"mode": "signatures"},
+                "tool_response": {
+                    "content": "sig only",
+                    "_meta": {"replaces": ["Read"], "collapsedCalls": 1, "baselineBytes": 8000}
+                }
+            }),
+            tmp.path(),
+        );
+        let events = read_events(tmp.path(), "m2");
+        let ev = metrics(&events)[0];
+        assert_eq!(ev["baselineBytes"], 8000);
+        assert_eq!(ev["baselineTokens"], 2000);
+        let rt = ev["resultTokens"].as_u64().unwrap();
+        let saved = ev["estimatedSavedTokens"].as_u64().unwrap();
+        assert_eq!(saved, 2000u64.saturating_sub(rt));
+    }
+
+    #[test]
+    fn tool_metrics_baseline_for_build() {
+        let tmp = TempDir::new().unwrap();
+        drive(
+            json!({
+                "session_id": "m3",
+                "tool_name": "mcp__relaywash__Build",
+                "tool_input": {"builder": "cargo"},
+                "tool_response": {
+                    "builder": "cargo",
+                    "success": true,
+                    "_meta": {"replaces": ["Bash:build"], "collapsedCalls": 1, "baselineBytes": 4096}
+                }
+            }),
+            tmp.path(),
+        );
+        let events = read_events(tmp.path(), "m3");
+        let ev = metrics(&events)[0];
+        assert_eq!(ev["baselineBytes"], 4096);
+        assert_eq!(ev["baselineTokens"], 1024);
+    }
+
+    #[test]
+    fn tool_metrics_baseline_for_testrun() {
+        let tmp = TempDir::new().unwrap();
+        drive(
+            json!({
+                "session_id": "m4",
+                "tool_name": "mcp__relaywash__TestRun",
+                "tool_input": {"runner": "cargo"},
+                "tool_response": {
+                    "runner": "cargo",
+                    "passed": 12,
+                    "failed": 0,
+                    "_meta": {"replaces": ["Bash:test"], "collapsedCalls": 1, "baselineBytes": 12000}
+                }
+            }),
+            tmp.path(),
+        );
+        let events = read_events(tmp.path(), "m4");
+        let ev = metrics(&events)[0];
+        assert_eq!(ev["baselineBytes"], 12000);
+        assert_eq!(ev["baselineTokens"], 3000);
+    }
+
+    #[test]
+    fn tool_metrics_redacts_user_content() {
+        // The metrics event must never carry args, content, paths, etc. — same
+        // confidentiality contract as tool_outcome.
+        let tmp = TempDir::new().unwrap();
+        drive(
+            json!({
+                "session_id": "m5",
+                "tool_name": "mcp__relaywash__Search",
+                "tool_input": {
+                    "content": "SECRET_TOKEN_abc123",
+                    "paths": ["/etc/passwd"],
+                    "maxResults": 5
+                },
+                "tool_response": {"results": []}
+            }),
+            tmp.path(),
+        );
+        let events = read_events(tmp.path(), "m5");
+        let m = metrics(&events);
+        let raw = serde_json::to_string(&m[0]).unwrap();
+        assert!(!raw.contains("SECRET_TOKEN_abc123"));
+        assert!(!raw.contains("/etc/passwd"));
+        assert!(m[0].get("args").is_none(), "metrics event has no args field");
     }
 }

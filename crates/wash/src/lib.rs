@@ -8,5 +8,6 @@ pub mod profile;
 pub mod savings;
 pub mod search;
 pub mod state;
+pub mod tokens;
 pub mod tools;
 pub mod walk;

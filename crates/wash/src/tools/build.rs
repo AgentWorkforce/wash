@@ -79,12 +79,19 @@ fn run(args: &Value) -> Result<ToolResult> {
     let t0 = Instant::now();
     let out = Command::new(&cmd[0]).args(&cmd[1..]).current_dir(&cwd).output();
     let duration = t0.elapsed().as_millis() as u64;
-    let (stdout, stderr, status_code) = match out {
-        Ok(o) => (
-            String::from_utf8_lossy(&o.stdout).into_owned(),
-            String::from_utf8_lossy(&o.stderr).into_owned(),
-            o.status.code(),
-        ),
+    let (stdout, stderr, status_code, baseline) = match out {
+        Ok(o) => {
+            // Baseline is the raw byte count the agent would have paid for. Compute it
+            // from the original stdout/stderr (plus the "\n" we stitch in below) so
+            // that lossy UTF-8 decoding can't drift the savings estimate.
+            let baseline = (o.stdout.len() + 1 + o.stderr.len()) as u64;
+            (
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+                o.status.code(),
+                baseline,
+            )
+        }
         Err(e) => {
             return ok_value(json!({
                 "builder": builder,
@@ -100,37 +107,42 @@ fn run(args: &Value) -> Result<ToolResult> {
 
     let success = status_code == Some(0);
     if success {
-        return ok_value(json!({
+        return ok_value_with_baseline(json!({
             "builder": builder,
             "success": true,
             "duration": duration,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        }));
+        }), baseline);
     }
 
     let errors = parse_errors(&builder, &raw);
     if !errors.is_empty() {
-        return ok_value(json!({
+        return ok_value_with_baseline(json!({
             "builder": builder,
             "success": false,
             "duration": duration,
             "errors": errors,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        }));
+        }), baseline);
     }
     let tail = tail_lines_of(&raw, tail_lines);
-    ok_value(json!({
+    ok_value_with_baseline(json!({
         "builder": builder,
         "success": false,
         "duration": duration,
         "errorTail": tail,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-    }))
+    }), baseline)
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
     Ok(ToolResult::new("relaywash__Build", value)
         .with_meta(Meta::new(["Bash:build".to_string()], 1)))
+}
+
+fn ok_value_with_baseline(value: Value, baseline: u64) -> Result<ToolResult> {
+    Ok(ToolResult::new("relaywash__Build", value)
+        .with_meta(Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline)))
 }
 
 fn detect_builder(cwd: &Path) -> String {

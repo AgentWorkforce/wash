@@ -135,12 +135,17 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
         small_function_lines,
     );
 
-    Ok(read_result(json!({
-        "content": augmented,
-        "truncated": true,
-        "languageDetected": language.as_str(),
-        "lineMap": sigs.line_map,
-    })))
+    let baseline = text.len() as u64;
+    Ok(ToolResult::new(
+        "relaywash__Read",
+        json!({
+            "content": augmented,
+            "truncated": true,
+            "languageDetected": language.as_str(),
+            "lineMap": sigs.line_map,
+        }),
+    )
+    .with_meta(Meta::new(["Read".to_string()], 1).with_baseline(baseline)))
 }
 
 fn read_result(value: Value) -> ToolResult {
