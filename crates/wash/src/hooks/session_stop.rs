@@ -22,7 +22,7 @@ fn run_ingest() -> Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(async { ingest(IngestOptions::default()).await })?;
+    rt.block_on(async { ingest(IngestOptions::default()) })?;
     Ok(())
 }
 
