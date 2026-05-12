@@ -61,10 +61,7 @@ struct ParseOut {
 
 fn run(args: &Value) -> Result<ToolResult> {
     if let Some(name) = args.get("getFailureLog").and_then(|v| v.as_str()) {
-        return Ok(ToolResult::new(
-            "relaywash__TestRun",
-            fetch_failure_slice(name)?,
-        ));
+        return ok_value(fetch_failure_slice(name)?);
     }
 
     let cwd: PathBuf = args
@@ -103,7 +100,6 @@ fn run(args: &Value) -> Result<ToolResult> {
             "failures": [],
             "fullLogPath": Value::Null,
             "error": format!("no command for runner: {runner}"),
-            "_meta": Meta::new(["Bash:test".to_string()], 1),
         }));
     };
 
@@ -125,7 +121,6 @@ fn run(args: &Value) -> Result<ToolResult> {
                 "failures": [],
                 "fullLogPath": Value::Null,
                 "error": format!("spawn {} failed: {e}", cmd[0]),
-                "_meta": Meta::new(["Bash:test".to_string()], 1),
             }));
         }
     };
@@ -147,12 +142,12 @@ fn run(args: &Value) -> Result<ToolResult> {
         "duration": duration,
         "failures": failures,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        "_meta": Meta::new(["Bash:test".to_string()], 1),
     }))
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__TestRun", value))
+    Ok(ToolResult::new("relaywash__TestRun", value)
+        .with_meta(Meta::new(["Bash:test".to_string()], 1)))
 }
 
 fn detect_runner(cwd: &Path) -> String {
@@ -455,7 +450,6 @@ fn fetch_failure_slice(name: &str) -> Result<Value> {
     Ok(json!({
         "found": true,
         "slice": &body[start..end],
-        "_meta": Meta::new(["Bash:test".to_string()], 1),
     }))
 }
 

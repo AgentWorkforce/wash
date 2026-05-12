@@ -73,7 +73,6 @@ fn run(args: &Value) -> Result<ToolResult> {
             "duration": 0,
             "errorTail": format!("no command for builder: {builder}"),
             "fullLogPath": Value::Null,
-            "_meta": Meta::new(["Bash:build".to_string()], 1),
         }));
     };
 
@@ -93,7 +92,6 @@ fn run(args: &Value) -> Result<ToolResult> {
                 "duration": duration,
                 "errorTail": format!("spawn {} failed: {}", cmd[0], e),
                 "fullLogPath": Value::Null,
-                "_meta": Meta::new(["Bash:build".to_string()], 1),
             }));
         }
     };
@@ -107,7 +105,6 @@ fn run(args: &Value) -> Result<ToolResult> {
             "success": true,
             "duration": duration,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            "_meta": Meta::new(["Bash:build".to_string()], 1),
         }));
     }
 
@@ -119,7 +116,6 @@ fn run(args: &Value) -> Result<ToolResult> {
             "duration": duration,
             "errors": errors,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            "_meta": Meta::new(["Bash:build".to_string()], 1),
         }));
     }
     let tail = tail_lines_of(&raw, tail_lines);
@@ -129,12 +125,12 @@ fn run(args: &Value) -> Result<ToolResult> {
         "duration": duration,
         "errorTail": tail,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        "_meta": Meta::new(["Bash:build".to_string()], 1),
     }))
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__Build", value))
+    Ok(ToolResult::new("relaywash__Build", value)
+        .with_meta(Meta::new(["Bash:build".to_string()], 1)))
 }
 
 fn detect_builder(cwd: &Path) -> String {

@@ -116,9 +116,9 @@ fn run(args: &Value) -> Result<ToolResult> {
         "relaywash__Edit",
         json!({
             "results": results,
-            "_meta": Meta::new(["Edit".to_string()], total as u32),
         }),
-    ))
+    )
+    .with_meta(Meta::new(["Edit".to_string()], total as u32)))
 }
 
 fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
