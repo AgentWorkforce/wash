@@ -6,7 +6,7 @@ mod server;
 
 use anyhow::Result;
 
-pub use server::{McpServer, Tool, ToolContext, ToolResult};
+pub use server::{McpServer, Tool, ToolContext, ToolResult, format_tool_result};
 
 use crate::tools;
 

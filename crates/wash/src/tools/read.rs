@@ -76,15 +76,11 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
     let unchanged = cached == Some(mtime_ms);
 
     if unchanged && range.is_none() {
-        return Ok(ToolResult::new(
-            "relaywash__Read",
-            json!({
-                "content": "",
-                "truncated": false,
-                "languageDetected": language.as_str(),
-                "_meta": Meta::new(["Read".to_string()], 1),
-            }),
-        ));
+        return Ok(read_result(json!({
+            "content": "",
+            "truncated": false,
+            "languageDetected": language.as_str(),
+        })));
     }
 
     let text = std::fs::read_to_string(&path)?;
@@ -101,27 +97,19 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
         let s = start.saturating_sub(1).min(lines.len());
         let e = end.min(lines.len());
         let slice = lines[s..e].join("\n");
-        return Ok(ToolResult::new(
-            "relaywash__Read",
-            json!({
-                "content": slice,
-                "truncated": false,
-                "languageDetected": language.as_str(),
-                "_meta": Meta::new(["Read".to_string()], 1),
-            }),
-        ));
+        return Ok(read_result(json!({
+            "content": slice,
+            "truncated": false,
+            "languageDetected": language.as_str(),
+        })));
     }
 
     if mode.as_deref() == Some("full") || language == Language::Unknown {
-        return Ok(ToolResult::new(
-            "relaywash__Read",
-            json!({
-                "content": text,
-                "truncated": false,
-                "languageDetected": language.as_str(),
-                "_meta": Meta::new(["Read".to_string()], 1),
-            }),
-        ));
+        return Ok(read_result(json!({
+            "content": text,
+            "truncated": false,
+            "languageDetected": language.as_str(),
+        })));
     }
 
     // signatures mode (default)
@@ -129,15 +117,11 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
     let small_file_lines = prof.small_file_lines.unwrap_or(DEFAULT_SMALL_FILE_LINES);
     let lines: Vec<&str> = text.split('\n').collect();
     if lines.len() <= small_file_lines {
-        return Ok(ToolResult::new(
-            "relaywash__Read",
-            json!({
-                "content": text,
-                "truncated": false,
-                "languageDetected": language.as_str(),
-                "_meta": Meta::new(["Read".to_string()], 1),
-            }),
-        ));
+        return Ok(read_result(json!({
+            "content": text,
+            "truncated": false,
+            "languageDetected": language.as_str(),
+        })));
     }
 
     let sigs = extract_signatures(&text, language);
@@ -151,16 +135,16 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
         small_function_lines,
     );
 
-    Ok(ToolResult::new(
-        "relaywash__Read",
-        json!({
-            "content": augmented,
-            "truncated": true,
-            "languageDetected": language.as_str(),
-            "lineMap": sigs.line_map,
-            "_meta": Meta::new(["Read".to_string()], 1),
-        }),
-    ))
+    Ok(read_result(json!({
+        "content": augmented,
+        "truncated": true,
+        "languageDetected": language.as_str(),
+        "lineMap": sigs.line_map,
+    })))
+}
+
+fn read_result(value: Value) -> ToolResult {
+    ToolResult::new("relaywash__Read", value).with_meta(Meta::new(["Read".to_string()], 1))
 }
 
 fn augment_with_small_bodies(
