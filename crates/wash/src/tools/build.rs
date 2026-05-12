@@ -99,6 +99,7 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
     let raw = format!("{stdout}\n{stderr}");
     let log_path = write_log("build", &raw).ok();
+    let baseline = raw.len() as u64;
 
     let success = status_code == Some(0);
     if success {
@@ -107,7 +108,7 @@ fn run(args: &Value) -> Result<ToolResult> {
             "success": true,
             "duration": duration,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            "_meta": Meta::new(["Bash:build".to_string()], 1),
+            "_meta": Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline),
         }));
     }
 
@@ -119,7 +120,7 @@ fn run(args: &Value) -> Result<ToolResult> {
             "duration": duration,
             "errors": errors,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-            "_meta": Meta::new(["Bash:build".to_string()], 1),
+            "_meta": Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline),
         }));
     }
     let tail = tail_lines_of(&raw, tail_lines);
@@ -129,7 +130,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         "duration": duration,
         "errorTail": tail,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        "_meta": Meta::new(["Bash:build".to_string()], 1),
+        "_meta": Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline),
     }))
 }
 

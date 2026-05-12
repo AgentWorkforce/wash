@@ -131,6 +131,7 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
     let raw = format!("{stdout}{stderr}");
     let log_path = crate::tools::build::write_log("testrun", &raw).ok();
+    let baseline = raw.len() as u64;
 
     let parsed = parse_runner_output(&runner, &raw);
     let failures: Vec<Failure> = if failures_only {
@@ -147,7 +148,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         "duration": duration,
         "failures": failures,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        "_meta": Meta::new(["Bash:test".to_string()], 1),
+        "_meta": Meta::new(["Bash:test".to_string()], 1).with_baseline(baseline),
     }))
 }
 

@@ -151,6 +151,7 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
         small_function_lines,
     );
 
+    let baseline = text.len() as u64;
     Ok(ToolResult::new(
         "relaywash__Read",
         json!({
@@ -158,7 +159,7 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
             "truncated": true,
             "languageDetected": language.as_str(),
             "lineMap": sigs.line_map,
-            "_meta": Meta::new(["Read".to_string()], 1),
+            "_meta": Meta::new(["Read".to_string()], 1).with_baseline(baseline),
         }),
     ))
 }
