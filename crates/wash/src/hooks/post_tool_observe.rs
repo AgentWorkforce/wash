@@ -218,14 +218,20 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         estimated_saved_tokens,
         hit_cap,
     };
-    append_event(&events_path, &outcome);
-    append_event(&events_path, &metrics);
+    append_events(&events_path, &outcome, &metrics);
 
     write_continue(out)
 }
 
-fn append_event<T: Serialize>(events_path: &Path, event: &T) {
-    let line = match serde_json::to_string(event) {
+fn append_events<T: Serialize, U: Serialize>(events_path: &Path, first: &T, second: &U) {
+    let line1 = match serde_json::to_string(first) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("relaywash: observe serialize failed: {e}");
+            return;
+        }
+    };
+    let line2 = match serde_json::to_string(second) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("relaywash: observe serialize failed: {e}");
@@ -234,7 +240,11 @@ fn append_event<T: Serialize>(events_path: &Path, event: &T) {
     };
     match fs::OpenOptions::new().create(true).append(true).open(events_path) {
         Ok(mut f) => {
-            if let Err(e) = writeln!(f, "{line}") {
+            if let Err(e) = writeln!(f, "{line1}") {
+                eprintln!("relaywash: observe append failed: {e}");
+                return;
+            }
+            if let Err(e) = writeln!(f, "{line2}") {
                 eprintln!("relaywash: observe append failed: {e}");
             }
         }
