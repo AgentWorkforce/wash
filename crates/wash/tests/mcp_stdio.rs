@@ -190,6 +190,100 @@ fn assert_meta(res: &wash::mcp::ToolResult, expected_replaces: &[&str]) {
     assert!(parsed.get("_meta").is_some(), "text block missing _meta");
 }
 
+/// Issue #23: tool execution failures must surface as a `result` with `isError: true`
+/// so the model can read the failure text, NOT as a JSON-RPC `error` (which would
+/// render as a generic "tool failed" with no detail in Claude Code). Protocol-level
+/// failures (unknown method, missing tool name, etc.) still take the `error` path —
+/// those are exercised in `tools_call_protocol_errors_use_jsonrpc_error`.
+#[test]
+fn tools_call_handler_errors_become_is_error_result() {
+    let bin = env!("CARGO_BIN_EXE_wash");
+    let mut child = Command::new(bin)
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn wash mcp");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    stdin
+        .write_all(&frame(&json!({
+            "jsonrpc":"2.0","id":1,"method":"initialize","params":{}
+        })))
+        .unwrap();
+    // Read with a missing `path` argument: the handler returns Err. Pre-fix this
+    // emitted a JSON-RPC error with code -32000; per the MCP spec it should be a
+    // normal result with `isError: true` and the message in `content[].text`.
+    stdin
+        .write_all(&frame(&json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"relaywash__Read","arguments":{}}
+        })))
+        .unwrap();
+    stdin.flush().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let _init = read_one(&mut stdout, deadline).expect("initialize response");
+    let resp = read_one(&mut stdout, deadline).expect("tools/call response");
+
+    assert_eq!(resp["id"], 2);
+    assert!(resp.get("error").is_none(), "handler Err should NOT surface as JSON-RPC error: {resp}");
+    let result = &resp["result"];
+    assert_eq!(result["isError"], json!(true), "expected isError: true, got {result}");
+    let text = result["content"][0]["text"].as_str().expect("error text");
+    assert!(!text.is_empty(), "error text should be non-empty");
+
+    drop(stdin);
+    let _ = child.wait();
+}
+
+/// Counterpart to the previous test: protocol-level failures (unknown tool name,
+/// missing `name` field, etc.) still ride the JSON-RPC `error` channel. Only the
+/// handler-returned `Err` case was reclassified.
+#[test]
+fn tools_call_protocol_errors_use_jsonrpc_error() {
+    let bin = env!("CARGO_BIN_EXE_wash");
+    let mut child = Command::new(bin)
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn wash mcp");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    stdin
+        .write_all(&frame(&json!({
+            "jsonrpc":"2.0","id":1,"method":"initialize","params":{}
+        })))
+        .unwrap();
+    stdin
+        .write_all(&frame(&json!({
+            "jsonrpc":"2.0","id":2,"method":"tools/call",
+            "params":{"name":"relaywash__DoesNotExist","arguments":{}}
+        })))
+        .unwrap();
+    stdin.flush().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let _init = read_one(&mut stdout, deadline).expect("initialize response");
+    let resp = read_one(&mut stdout, deadline).expect("tools/call response");
+
+    assert_eq!(resp["id"], 2);
+    assert!(resp.get("result").is_none(), "unknown tool should not return a result: {resp}");
+    assert_eq!(resp["error"]["code"], json!(-32000));
+    let msg = resp["error"]["message"].as_str().expect("error message");
+    assert!(msg.contains("Unknown tool"), "unexpected error message: {msg}");
+
+    drop(stdin);
+    let _ = child.wait();
+}
+
 #[test]
 fn mcp_initialize_and_tools_list() {
     let bin = env!("CARGO_BIN_EXE_wash");

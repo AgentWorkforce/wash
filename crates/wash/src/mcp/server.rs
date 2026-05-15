@@ -173,8 +173,18 @@ impl McpServer {
                     .find(|t| t.name == name)
                     .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
                 let ctx = ToolContext { session_id: self.session_id.clone() };
-                let out = (tool.handler)(&args, &ctx)?;
-                Ok(Some(format_tool_result(&out)))
+                // Per the MCP spec, JSON-RPC `error` is reserved for protocol/transport
+                // failures (unknown method, malformed request, missing tool, etc.). Tool
+                // *execution* failures must come back as a normal `result` with
+                // `isError: true` so the model can read the failure text and react,
+                // rather than seeing a generic "tool failed" with no detail.
+                match (tool.handler)(&args, &ctx) {
+                    Ok(out) => Ok(Some(format_tool_result(&out))),
+                    Err(e) => Ok(Some(json!({
+                        "content": [{"type": "text", "text": e.to_string()}],
+                        "isError": true,
+                    }))),
+                }
             }
             "ping" => Ok(Some(json!({}))),
             "shutdown" | "exit" => {
