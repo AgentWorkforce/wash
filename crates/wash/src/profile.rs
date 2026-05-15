@@ -52,6 +52,8 @@ pub struct SearchDefaults {
     pub max_results: Option<usize>,
     #[serde(rename = "contextLines", skip_serializing_if = "Option::is_none")]
     pub context_lines: Option<u32>,
+    #[serde(rename = "maxFileBytes", skip_serializing_if = "Option::is_none")]
+    pub max_file_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank: Option<String>,
 }
