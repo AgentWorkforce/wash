@@ -167,11 +167,11 @@ fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
     let mut current = original.clone();
     let mut partial: Vec<(usize, PartialResult)> = Vec::with_capacity(edits.len());
 
-    for (idx_in_group, edit) in edits.iter().enumerate() {
+    for edit in edits.iter() {
         let matches = locate(&current, edit);
         if matches.is_empty() {
             partial.push((edit.input_index, PartialResult::Failed("oldText not found".into())));
-            return rollback(path, edits, partial, idx_in_group, None);
+            return rollback(path, edits, partial, None);
         }
         if matches.len() > 1 {
             let reason = format!(
@@ -179,7 +179,7 @@ fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
                 matches.len()
             );
             partial.push((edit.input_index, PartialResult::Failed(reason)));
-            return rollback(path, edits, partial, idx_in_group, None);
+            return rollback(path, edits, partial, None);
         }
         let (start, end) = matches[0];
         let mut next = String::with_capacity(current.len() - (end - start) + edit.new_text.len());
@@ -198,14 +198,13 @@ fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
             path,
             edits,
             partial,
-            usize::MAX,
             Some("post-edit syntax check failed".into()),
         );
     }
 
     if let Err(e) = atomic_write(path, &current) {
         let reason = format!("write failed: {e}");
-        return rollback(path, edits, partial, usize::MAX, Some(reason));
+        return rollback(path, edits, partial, Some(reason));
     }
 
     partial
@@ -231,47 +230,54 @@ enum PartialResult {
     Failed(String),
 }
 
+/// Build the per-edit response for a failed batch. Every sibling edit in the same file
+/// is reported `ok: false` — the file was never written, so an `ok: true` here would be
+/// a lie the agent can't see through. The failed edit keeps its own reason; siblings
+/// (and any edits past the failure point) get a reason that points at the cause.
 fn rollback(
     path: &str,
     edits: Vec<EditSpec>,
     partial: Vec<(usize, PartialResult)>,
-    _failed_at: usize,
     override_reason: Option<String>,
 ) -> Vec<(usize, EditResult)> {
+    let sibling_reason: String = if let Some(ref r) = override_reason {
+        format!("rolled back ({r})")
+    } else {
+        match partial.last() {
+            Some((failed_idx, PartialResult::Failed(reason))) => {
+                format!("rolled back (sibling edit {failed_idx} failed: {reason})")
+            }
+            _ => "rolled back".to_string(),
+        }
+    };
+
     let partial_count = partial.len();
     let mut out: Vec<(usize, EditResult)> = partial
         .into_iter()
         .map(|(input_idx, p)| {
+            let reason = match p {
+                PartialResult::Ok => Some(sibling_reason.clone()),
+                PartialResult::Failed(r) => Some(r),
+            };
             (
                 input_idx,
                 EditResult {
                     path: path.to_string(),
-                    ok: matches!(p, PartialResult::Ok),
-                    reason: match p {
-                        PartialResult::Ok => None,
-                        PartialResult::Failed(r) => Some(r),
-                    },
+                    ok: false,
+                    reason,
                 },
             )
         })
         .collect();
-    // Edits past the failure point get "rolled back".
     for spec in edits.into_iter().skip(partial_count) {
         out.push((
             spec.input_index,
             EditResult {
                 path: path.to_string(),
                 ok: false,
-                reason: Some("rolled back".into()),
+                reason: Some(sibling_reason.clone()),
             },
         ));
-    }
-    if let Some(reason) = override_reason {
-        // Match legacy JS: when post-check fails, overwrite the FIRST ok result with the reason.
-        if let Some((_, r)) = out.iter_mut().find(|(_, r)| r.ok) {
-            r.ok = false;
-            r.reason = Some(reason);
-        }
     }
     out
 }
@@ -448,9 +454,15 @@ mod tests {
             {"path": path, "oldText": "missing", "newText": "X"}
         ]))
         .unwrap();
-        assert_eq!(v["results"][0]["ok"], true); // first edit succeeded in memory
+        // The file was never written — neither edit should report success.
+        assert_eq!(v["results"][0]["ok"], false);
         assert_eq!(v["results"][1]["ok"], false);
-        // But the file is unchanged — atomic per file.
+        let reason0 = v["results"][0]["reason"].as_str().unwrap();
+        assert!(
+            reason0.contains("sibling edit 1 failed"),
+            "expected sibling-fail reason, got: {reason0}"
+        );
+        assert_eq!(v["results"][1]["reason"].as_str().unwrap(), "oldText not found");
         assert_eq!(fs::read_to_string(&path).unwrap(), "a = 1\nb = 2\n");
     }
 
@@ -485,7 +497,39 @@ mod tests {
             {"path": path, "oldText": "c", "newText": "C"}
         ]))
         .unwrap();
-        assert_eq!(v["results"][2]["ok"], false);
-        assert_eq!(v["results"][2]["reason"].as_str().unwrap(), "rolled back");
+        // All three results must be ok:false — the file was never written.
+        for i in 0..3 {
+            assert_eq!(v["results"][i]["ok"], false, "edit {i} should be ok:false");
+        }
+        assert_eq!(v["results"][1]["reason"].as_str().unwrap(), "oldText not found");
+        for i in [0usize, 2] {
+            let reason = v["results"][i]["reason"].as_str().unwrap();
+            assert!(
+                reason.contains("sibling edit 1 failed"),
+                "edit {i} expected sibling-fail reason, got: {reason}"
+            );
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn post_edit_syntax_check_failure_marks_all_failed() {
+        let before = "export function foo() { return 1 }\nexport const x = 2;\n";
+        let (_dir, path) = tmp_file(before, ".ts");
+        let v = call(json!([
+            {"path": path, "oldText": "{ return 1 }", "newText": "{ return 1"},
+            {"path": path, "oldText": "const x = 2", "newText": "const x = 3"}
+        ]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], false);
+        assert_eq!(v["results"][1]["ok"], false);
+        for i in 0..2 {
+            let reason = v["results"][i]["reason"].as_str().unwrap();
+            assert!(
+                reason.contains("post-edit syntax check failed"),
+                "edit {i} expected post-edit reason, got: {reason}"
+            );
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), before, "file must be unchanged");
     }
 }
