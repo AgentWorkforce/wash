@@ -17,16 +17,15 @@ fn frame(msg: &Value) -> Vec<u8> {
     out
 }
 
-fn read_one(stream: &mut impl Read, deadline: Instant) -> Option<Value> {
-    let mut buf = Vec::new();
+fn read_one(stream: &mut impl Read, buf: &mut Vec<u8>, deadline: Instant) -> Option<Value> {
+    // The buffer is owned by the caller so leftover bytes from a previous frame (or
+    // bytes belonging to a *following* frame that arrived in the same syscall) survive
+    // across calls. Reading into a function-local buffer would silently drop the tail
+    // and make these tests racy whenever the kernel happens to deliver two responses in
+    // one chunk.
     let mut chunk = [0u8; 1024];
-    while Instant::now() < deadline {
-        let n = stream.read(&mut chunk).ok()?;
-        if n == 0 {
-            return None;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        if let Some(end) = find_subseq(&buf, b"\r\n\r\n") {
+    loop {
+        if let Some(end) = find_subseq(buf, b"\r\n\r\n") {
             let header = std::str::from_utf8(&buf[..end]).ok()?;
             let len = header
                 .lines()
@@ -34,18 +33,21 @@ fn read_one(stream: &mut impl Read, deadline: Instant) -> Option<Value> {
                 .parse::<usize>()
                 .ok()?;
             let start = end + 4;
-            while buf.len() < start + len {
-                let n = stream.read(&mut chunk).ok()?;
-                if n == 0 {
-                    return None;
-                }
-                buf.extend_from_slice(&chunk[..n]);
+            if buf.len() >= start + len {
+                let value = serde_json::from_slice(&buf[start..start + len]).ok()?;
+                buf.drain(..start + len);
+                return Some(value);
             }
-            let body = &buf[start..start + len];
-            return serde_json::from_slice(body).ok();
         }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        let n = stream.read(&mut chunk).ok()?;
+        if n == 0 {
+            return None;
+        }
+        buf.extend_from_slice(&chunk[..n]);
     }
-    None
 }
 
 fn find_subseq(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -115,8 +117,9 @@ fn list_tools_with_env(bin: &str, envs: &[(&str, String)]) -> serde_json::Value 
         .unwrap();
     stdin.flush().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    let _init = read_one(&mut stdout, deadline);
-    let list = read_one(&mut stdout, deadline).expect("tools/list");
+    let mut buf = Vec::new();
+    let _init = read_one(&mut stdout, &mut buf, deadline);
+    let list = read_one(&mut stdout, &mut buf, deadline).expect("tools/list");
     drop(stdin);
     let _ = child.wait();
     list["result"].clone()
@@ -226,8 +229,9 @@ fn tools_call_handler_errors_become_is_error_result() {
     stdin.flush().unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let _init = read_one(&mut stdout, deadline).expect("initialize response");
-    let resp = read_one(&mut stdout, deadline).expect("tools/call response");
+    let mut buf = Vec::new();
+    let _init = read_one(&mut stdout, &mut buf, deadline).expect("initialize response");
+    let resp = read_one(&mut stdout, &mut buf, deadline).expect("tools/call response");
 
     assert_eq!(resp["id"], 2);
     assert!(resp.get("error").is_none(), "handler Err should NOT surface as JSON-RPC error: {resp}");
@@ -271,8 +275,9 @@ fn tools_call_protocol_errors_use_jsonrpc_error() {
     stdin.flush().unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let _init = read_one(&mut stdout, deadline).expect("initialize response");
-    let resp = read_one(&mut stdout, deadline).expect("tools/call response");
+    let mut buf = Vec::new();
+    let _init = read_one(&mut stdout, &mut buf, deadline).expect("initialize response");
+    let resp = read_one(&mut stdout, &mut buf, deadline).expect("tools/call response");
 
     assert_eq!(resp["id"], 2);
     assert!(resp.get("result").is_none(), "unknown tool should not return a result: {resp}");
@@ -311,11 +316,12 @@ fn mcp_initialize_and_tools_list() {
     stdin.flush().unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(5);
-    let init = read_one(&mut stdout, deadline).expect("initialize response");
+    let mut buf = Vec::new();
+    let init = read_one(&mut stdout, &mut buf, deadline).expect("initialize response");
     assert_eq!(init["id"], 1);
     assert_eq!(init["result"]["serverInfo"]["name"], "relaywash");
 
-    let list = read_one(&mut stdout, deadline).expect("tools/list response");
+    let list = read_one(&mut stdout, &mut buf, deadline).expect("tools/list response");
     assert_eq!(list["id"], 2);
     let tools = list["result"]["tools"].as_array().expect("tools array");
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
