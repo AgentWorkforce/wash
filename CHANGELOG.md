@@ -5,6 +5,12 @@ lockstep and do not carry separate narrative changelogs.
 
 ## [Unreleased]
 
+### Added
+
+- `wash hook pre-compact` / `post-compact`: snapshot the transcript on
+  compaction and append a `kind: "compaction"` event to the session ledger
+  with per-tool survival counts and estimated token deltas.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
