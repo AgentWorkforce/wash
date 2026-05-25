@@ -11,6 +11,12 @@ lockstep and do not carry separate narrative changelogs.
   same MCP tool handlers, captures bytes / tokens / call count per task, and
   fails comparisons on regressions. A `--fast` flag runs the CI subset.
 
+### Fixed
+
+- `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
+  when the `repo` arg is omitted, replacing the broken literal-placeholder
+  fallback that produced 404s.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
