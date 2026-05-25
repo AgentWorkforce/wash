@@ -113,7 +113,8 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
     }
 
     // signatures mode (default)
-    let prof = &profile::get().tools.read;
+    let active_profile = profile::get();
+    let prof = &active_profile.tools.read;
     let small_file_lines = prof.small_file_lines.unwrap_or(DEFAULT_SMALL_FILE_LINES);
     let lines: Vec<&str> = text.split('\n').collect();
     if lines.len() <= small_file_lines {
