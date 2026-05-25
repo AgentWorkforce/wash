@@ -1,5 +1,6 @@
 pub mod ast;
 pub mod fuzzy;
+pub mod git;
 pub mod hooks;
 pub mod language;
 pub mod mcp;
