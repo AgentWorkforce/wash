@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use crate::mcp::{Tool, ToolResult};
 use crate::meta::Meta;
 use crate::profile;
-use crate::search::{SearchHit, SearchOpts};
+use crate::search::{DEFAULT_MAX_FILE_BYTES, SearchHit, SearchOpts};
 use crate::state;
 
 const DESCRIPTION: &str = "Combined glob + grep + read. Returns ranked snippets across matched files. Use this instead of chaining Glob → Grep → Read. Always returns snippets only, never full file contents.";
@@ -28,6 +28,7 @@ pub fn tool() -> Tool {
                 "symbol": { "type": "string", "description": "Identifier to find (word-boundary search). Use this OR `content`." },
                 "maxResults": { "type": "integer", "minimum": 1, "default": DEFAULT_MAX_RESULTS },
                 "contextLines": { "type": "integer", "minimum": 0, "default": DEFAULT_CONTEXT_LINES },
+                "maxFileBytes": { "type": "integer", "minimum": 0, "description": "Skip files larger than this. 0 disables the cap. Default ~10MB." },
                 "rank": { "type": "string", "enum": ["matches","mtime","path-depth"], "default": "matches" },
                 "cwd": { "type": "string", "description": "Search root. Defaults to process.cwd()." }
             },
@@ -60,6 +61,16 @@ fn run(args: &Value) -> Result<ToolResult> {
         .map(|n| n as u32)
         .or(prof.context_lines)
         .unwrap_or(DEFAULT_CONTEXT_LINES);
+    // 0 explicitly disables the size cap, whether passed in the call or set on the
+    // profile. Omitted everywhere → static default (~10MB).
+    let max_file_bytes: Option<u64> = {
+        let raw = args
+            .get("maxFileBytes")
+            .and_then(|v| v.as_u64())
+            .or(prof.max_file_bytes)
+            .unwrap_or(DEFAULT_MAX_FILE_BYTES);
+        if raw == 0 { None } else { Some(raw) }
+    };
     let rank = args
         .get("rank")
         .and_then(|v| v.as_str())
@@ -85,17 +96,25 @@ fn run(args: &Value) -> Result<ToolResult> {
         _ => None,
     };
 
-    let hits = crate::search::run(SearchOpts {
+    let output = crate::search::run(SearchOpts {
         cwd: cwd.clone(),
         pattern: pattern.clone(),
         paths,
         context_lines,
+        max_file_bytes,
     })?;
 
     let pattern_was_used = pattern.is_some();
-    let ranked = rank_results(hits, &rank, &cwd);
+    let ranked = rank_results(output.hits, &rank, &cwd);
     let truncated = ranked.len() > max_results;
     let results: Vec<SearchHit> = ranked.into_iter().take(max_results).collect();
+
+    // Cap `skipped` so a monorepo with thousands of vendored bundles or binaries
+    // can't blow up the response. Mirror the `maxResults` budget — agents that
+    // ask for 50 hits don't want 50k skipped entries either.
+    let skipped_total = output.skipped.len();
+    let skipped_truncated = skipped_total > max_results;
+    let skipped: Vec<_> = output.skipped.into_iter().take(max_results).collect();
 
     let replaces: Vec<&str> = if pattern_was_used {
         if results.iter().any(|r| !r.snippet.is_empty()) {
@@ -110,6 +129,9 @@ fn run(args: &Value) -> Result<ToolResult> {
     let value = json!({
         "results": results,
         "truncated": truncated,
+        "skipped": skipped,
+        "skippedTotal": skipped_total,
+        "skippedTruncated": skipped_truncated,
     });
     Ok(ToolResult::new("relaywash__Search", value)
         .with_meta(Meta::new(replaces.iter().map(|s| s.to_string()), collapsed)))
@@ -152,4 +174,3 @@ fn rank_results(mut results: Vec<SearchHit>, mode: &str, cwd: &std::path::Path) 
         }
     }
 }
-
