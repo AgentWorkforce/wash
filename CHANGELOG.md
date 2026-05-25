@@ -11,6 +11,12 @@ lockstep and do not carry separate narrative changelogs.
   same MCP tool handlers, captures bytes / tokens / call count per task, and
   fails comparisons on regressions. A `--fast` flag runs the CI subset.
 
+### Changed
+
+- `wash` profile cache now reloads mid-session when the profile file changes,
+  so adaptive defaults pick up new writes without a CLI restart. A broken
+  per-repo profile falls through to the global profile instead of masking it.
+
 ### Fixed
 
 - `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
