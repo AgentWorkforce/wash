@@ -16,6 +16,9 @@ lockstep and do not carry separate narrative changelogs.
 - `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
   when the `repo` arg is omitted, replacing the broken literal-placeholder
   fallback that produced 404s.
+- `relaywash__Read`: signature augmentation matches by source line, fixing the
+  wrong-region splice when two signatures shared a prefix (e.g. `fn foo` and
+  `fn foobar`).
 
 ## [0.1.0] - 2026-05-25
 
