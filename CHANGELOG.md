@@ -5,6 +5,13 @@ lockstep and do not carry separate narrative changelogs.
 
 ## [Unreleased]
 
+### Added
+
+- Session-stop hook writes per-turn accounting records to
+  `${RELAYBURN_HOME}/turns/<session>.jsonl` with model, token usage, estimated
+  cost, tool list, and a deterministic task category. Ingestion is idempotent
+  across repeated Stop runs.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
