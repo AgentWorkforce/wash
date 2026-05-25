@@ -1,0 +1,40 @@
+{
+  "name": "find-and-read",
+  "description": "Find a target function across the source tree and then read the file that contains it. Reuses the find-and-read corpus.",
+  "corpus": "fixtures/corpus/find-and-read",
+  "status": "implemented",
+  "fastSubset": true,
+  "steps": [
+    {
+      "name": "search-symbol",
+      "tool": "Search",
+      "args": { "symbol": "computeTotal", "contextLines": 2 }
+    },
+    {
+      "name": "read-target",
+      "tool": "Read",
+      "args": { "path": "src/billing.ts", "mode": "range", "range": [18, 40] }
+    }
+  ],
+  "expectations": [
+    {
+      "kind": "file-in-top-results",
+      "name": "billing-in-top-search-hits",
+      "step": "search-symbol",
+      "files": ["src/billing.ts"],
+      "topN": 3
+    },
+    {
+      "kind": "line-range-read",
+      "name": "computeTotal-body-in-range",
+      "step": "read-target",
+      "ranges": [[15, 45]]
+    },
+    {
+      "kind": "min-hit-count",
+      "name": "at-least-one-hit",
+      "step": "search-symbol",
+      "min": 1
+    }
+  ]
+}

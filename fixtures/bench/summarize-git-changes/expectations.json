@@ -1,0 +1,9 @@
+{
+  "name": "summarize-git-changes",
+  "description": "Scaffold only — summarize a git diff. Implementation lands in a follow-up to issue #43.",
+  "corpus": "fixtures/corpus/large-codebase",
+  "status": "scaffold",
+  "fastSubset": false,
+  "steps": [],
+  "expectations": []
+}

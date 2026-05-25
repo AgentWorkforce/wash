@@ -1,0 +1,9 @@
+{
+  "name": "explore-subsystem",
+  "description": "Scaffold only — explore a subsystem across several files. Implementation lands in a follow-up to issue #43.",
+  "corpus": "fixtures/corpus/large-codebase",
+  "status": "scaffold",
+  "fastSubset": false,
+  "steps": [],
+  "expectations": []
+}

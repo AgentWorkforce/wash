@@ -1,0 +1,9 @@
+{
+  "name": "diagnose-failing-test",
+  "description": "Scaffold only — diagnose a failing test from runner output. Implementation lands in a follow-up to issue #43.",
+  "corpus": "fixtures/corpus/large-codebase",
+  "status": "scaffold",
+  "fastSubset": false,
+  "steps": [],
+  "expectations": []
+}

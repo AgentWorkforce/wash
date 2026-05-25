@@ -1,0 +1,9 @@
+{
+  "name": "multi-edit-refactor",
+  "description": "Scaffold only — multi-edit refactor walkthrough. Implementation lands in a follow-up to issue #43.",
+  "corpus": "fixtures/corpus/multi-edit-refactor",
+  "status": "scaffold",
+  "fastSubset": false,
+  "steps": [],
+  "expectations": []
+}

@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod bench;
 pub mod fuzzy;
 pub mod hooks;
 pub mod language;

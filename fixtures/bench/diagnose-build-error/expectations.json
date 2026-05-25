@@ -1,0 +1,9 @@
+{
+  "name": "diagnose-build-error",
+  "description": "Scaffold only — diagnose a build error from a noisy compiler log. Implementation lands in a follow-up to issue #43.",
+  "corpus": "fixtures/corpus/large-codebase",
+  "status": "scaffold",
+  "fastSubset": false,
+  "steps": [],
+  "expectations": []
+}
