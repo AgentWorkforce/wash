@@ -10,46 +10,53 @@ use std::sync::OnceLock;
 use super::{write_continue, write_json};
 
 struct Pattern {
-    re: &'static Regex,
+    re: Regex,
     hint: &'static str,
 }
 
+/// Single source of truth: each row pairs a regex source with its hint.
+/// Adding a row is one line, and misalignment is no longer expressible.
+const PATTERNS: &[(&str, &str)] = &[
+    (
+        r"^(?:cat|bat|head|tail|less|more)\s+\S",
+        "relaywash__Read",
+    ),
+    (r"^grep\b", "relaywash__Search"),
+    (r"^rg\b", "relaywash__Search"),
+    (r"^find\s+\S", "relaywash__Search"),
+    (
+        r"^git\s+(?:status|diff|log|show)\b",
+        "relaywash__GitState",
+    ),
+    (
+        r"^(?:pnpm|npm|yarn)\s+(?:run\s+)?test\b",
+        "relaywash__TestRun",
+    ),
+    (
+        r"^(?:pytest|jest|go\s+test|cargo\s+test)\b",
+        "relaywash__TestRun",
+    ),
+    (
+        r"^(?:pnpm|npm|yarn)\s+(?:run\s+)?build\b",
+        "relaywash__Build",
+    ),
+    (
+        r"^(?:tsc|cargo\s+build|go\s+build|vite\s+build|webpack)\b",
+        "relaywash__Build",
+    ),
+    (r"^gh\s+pr\s+(?:view|list|diff)\b", "relaywash__GhPR"),
+    (r"^gh\s+api\s+repos/\S+/pulls\b", "relaywash__GhPR"),
+];
+
 fn patterns() -> &'static [Pattern] {
     static PS: OnceLock<Vec<Pattern>> = OnceLock::new();
-    static REGEXES: OnceLock<Vec<Regex>> = OnceLock::new();
-    let regexes = REGEXES.get_or_init(|| {
-        vec![
-            Regex::new(r"^(?:cat|bat|head|tail|less|more)\s+\S").unwrap(),
-            Regex::new(r"^grep\b").unwrap(),
-            Regex::new(r"^rg\b").unwrap(),
-            Regex::new(r"^find\s+\S").unwrap(),
-            Regex::new(r"^git\s+(?:status|diff|log|show)\b").unwrap(),
-            Regex::new(r"^(?:pnpm|npm|yarn)\s+(?:run\s+)?test\b").unwrap(),
-            Regex::new(r"^(?:pytest|jest|go\s+test|cargo\s+test)\b").unwrap(),
-            Regex::new(r"^(?:pnpm|npm|yarn)\s+(?:run\s+)?build\b").unwrap(),
-            Regex::new(r"^(?:tsc|cargo\s+build|go\s+build|vite\s+build|webpack)\b").unwrap(),
-            Regex::new(r"^gh\s+pr\s+(?:view|list|diff)\b").unwrap(),
-            Regex::new(r"^gh\s+api\s+repos/\S+/pulls\b").unwrap(),
-        ]
-    });
     PS.get_or_init(|| {
-        let hints = [
-            "relaywash__Read",
-            "relaywash__Search",
-            "relaywash__Search",
-            "relaywash__Search",
-            "relaywash__GitState",
-            "relaywash__TestRun",
-            "relaywash__TestRun",
-            "relaywash__Build",
-            "relaywash__Build",
-            "relaywash__GhPR",
-            "relaywash__GhPR",
-        ];
-        regexes
+        PATTERNS
             .iter()
-            .zip(hints.iter().copied())
-            .map(|(re, hint)| Pattern { re, hint })
+            .map(|(src, hint)| Pattern {
+                re: Regex::new(src).unwrap(),
+                hint,
+            })
             .collect()
     })
 }
@@ -127,5 +134,18 @@ mod tests {
         let s = drive(&cmd);
         assert!(s.contains("relaywash__GitState"));
         assert!(!s.contains(&"x".repeat(150)), "message must be truncated");
+    }
+
+    #[test]
+    fn every_pattern_has_a_hint() {
+        // Regression guard: with the single-table representation, every row
+        // intrinsically carries both pieces. This asserts the built pattern
+        // list matches the source table 1:1 and every hint is non-empty.
+        let built = patterns();
+        assert_eq!(built.len(), PATTERNS.len());
+        for (p, (_src, hint)) in built.iter().zip(PATTERNS.iter()) {
+            assert!(!p.hint.is_empty(), "hint must be non-empty");
+            assert_eq!(p.hint, *hint);
+        }
     }
 }
