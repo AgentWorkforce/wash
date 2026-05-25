@@ -5,6 +5,11 @@ lockstep and do not carry separate narrative changelogs.
 
 ## [Unreleased]
 
+### Changed
+
+- Active profile reloads mid-session when its file changes, so adaptive
+  defaults pick up new writes without a CLI restart.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
