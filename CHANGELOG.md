@@ -12,6 +12,12 @@ lockstep and do not carry separate narrative changelogs.
   cost, tool list, and a deterministic task category. Ingestion is idempotent
   across repeated Stop runs.
 
+### Changed
+
+- `wash` profile cache now reloads mid-session when the profile file changes,
+  so adaptive defaults pick up new writes without a CLI restart. A broken
+  per-repo profile falls through to the global profile instead of masking it.
+
 ### Fixed
 
 - `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
