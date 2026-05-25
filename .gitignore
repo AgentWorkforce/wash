@@ -5,6 +5,8 @@ node_modules/
 # burn-compare local output (CI writes a different copy as a job artifact)
 compare-result.json
 .npm-cache
+# Claude Code agent worktrees
+.claude/
 # Rust build output
 target/
 Cargo.lock
