@@ -11,7 +11,9 @@ use super::{LineMapEntry, Signatures};
 pub fn extract(text: &str, language: Language) -> Signatures {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut line_map: Vec<LineMapEntry> = Vec::new();
-    let mut out: Vec<String> = Vec::new();
+    // `out` pairs each rendered line with its 1-based source line, or `0` for synthetic
+    // lines like the closing `}` we emit after eliding a body.
+    let mut out: Vec<(String, u32)> = Vec::new();
     let mut in_body: i32 = 0;
 
     let mut i = 0;
@@ -26,7 +28,7 @@ pub fn extract(text: &str, language: Language) -> Signatures {
                 }
             }
             if in_body <= 0 {
-                out.push("}".into());
+                out.push(("}".into(), 0));
                 in_body = 0;
             }
             i += 1;
@@ -38,7 +40,7 @@ pub fn extract(text: &str, language: Language) -> Signatures {
             }
             let trimmed = strip_inline_comments(line).trim_end().to_string();
             if trimmed.ends_with('{') {
-                out.push(format!("{line} …"));
+                out.push((format!("{line} …"), i as u32 + 1));
                 let mut depth = 0i32;
                 for c in line.chars() {
                     if c == '{' {
@@ -59,7 +61,7 @@ pub fn extract(text: &str, language: Language) -> Signatures {
                 line.trim_end()
             };
             if language == Language::Python && py_header.ends_with(':') {
-                out.push(format!("{line}  # …"));
+                out.push((format!("{line}  # …"), i as u32 + 1));
                 let base_indent = leading_ws(line);
                 let mut j = i + 1;
                 while j < lines.len() {
@@ -76,11 +78,14 @@ pub fn extract(text: &str, language: Language) -> Signatures {
                 i = j;
                 continue;
             }
-            out.push(line.to_string());
+            out.push((line.to_string(), i as u32 + 1));
         }
         i += 1;
     }
-    Signatures { content: out.join("\n"), line_map }
+    // Each `out` entry is a single line; `source_lines` is aligned 1:1.
+    let content = out.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join("\n");
+    let source_lines: Vec<u32> = out.iter().map(|(_, r)| *r).collect();
+    Signatures { content, line_map, source_lines }
 }
 
 fn header_re() -> &'static [Regex] {

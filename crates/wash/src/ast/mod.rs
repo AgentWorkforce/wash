@@ -17,6 +17,12 @@ pub struct LineMapEntry {
 pub struct Signatures {
     pub content: String,
     pub line_map: Vec<LineMapEntry>,
+    /// For each line in `content` (after splitting on `\n`), the 1-based source line
+    /// it originated from, or `0` for synthetic lines (e.g., the trailing `}` emitted
+    /// to balance an elided body). Used by Read's small-body augmentation to locate
+    /// a header by exact source line instead of a `starts_with` prefix match, which
+    /// goes wrong when two headers share a prefix (e.g., `fn foo` and `fn foobar`).
+    pub source_lines: Vec<u32>,
 }
 
 pub fn extract_signatures(text: &str, language: Language) -> Signatures {
