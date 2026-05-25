@@ -11,6 +11,12 @@ lockstep and do not carry separate narrative changelogs.
   compaction and append a `kind: "compaction"` event to the session ledger
   with per-tool survival counts and estimated token deltas.
 
+### Fixed
+
+- `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
+  when the `repo` arg is omitted, replacing the broken literal-placeholder
+  fallback that produced 404s.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
