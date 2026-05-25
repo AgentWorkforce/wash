@@ -5,6 +5,12 @@ lockstep and do not carry separate narrative changelogs.
 
 ## [Unreleased]
 
+### Added
+
+- `wash bench run` / `wash bench compare`: evaluation harness that drives the
+  same MCP tool handlers, captures bytes / tokens / call count per task, and
+  fails comparisons on regressions. A `--fast` flag runs the CI subset.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
