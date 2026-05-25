@@ -12,14 +12,49 @@ on:
     inputs:
       version:
         description: 'Version to publish (e.g. 0.1.0). Tag-driven release uses the tag.'
-        required: false
+        required: true
 
 permissions:
   contents: write
 
 jobs:
+  resolve-version:
+    name: resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      prerelease: ${{ steps.ver.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: derive version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.version }}" ]; then
+            version="${{ inputs.version }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ] && [[ "${GITHUB_REF_NAME}" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            echo "::error title=Missing release version::workflow_dispatch releases must provide the version input."
+            exit 1
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=Invalid release version::$version is not a supported semver version."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: build ${{ matrix.target }}
+    needs: resolve-version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -52,6 +87,23 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      - name: apply release version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+
+          const version = process.env.RELEASE_VERSION;
+          const path = 'Cargo.toml';
+          const toml = readFileSync(path, 'utf8');
+          const updated = toml.replace(/^version = "([^"]+)"$/m, `version = "${version}"`);
+          if (updated === toml) {
+            throw new Error('Cargo.toml workspace version not found');
+          }
+          writeFileSync(path, updated);
+          NODE
       - name: install cross
         if: matrix.cross == true
         run: cargo install cross --locked
@@ -81,8 +133,12 @@ jobs:
           path: packages/wash-${{ matrix.platform }}-${{ matrix.arch }}/bin/
 
   publish:
-    needs: build
+    needs:
+      - resolve-version
+      - build
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ needs.resolve-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -100,17 +156,11 @@ jobs:
             cp -r "$d"/* "packages/$name/bin/"
           done
           ls -la packages/wash-*/bin/
-      - name: derive version
-        id: ver
-        run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          fi
       - name: bump versions
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-version.outputs.version }}
         run: |
-          v="${{ steps.ver.outputs.version }}"
+          v="$RELEASE_VERSION"
           for pkg in packages/wash-*/package.json package.json; do
             tmp=$(mktemp)
             jq --arg v "$v" '.version = $v
@@ -128,3 +178,71 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
+
+  create-release:
+    name: create GitHub Release
+    needs:
+      - resolve-version
+      - publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build release notes
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+
+          const version = process.env.RELEASE_VERSION;
+          const platformPackages = [
+            '@relaywash/wash-darwin-arm64',
+            '@relaywash/wash-darwin-x64',
+            '@relaywash/wash-linux-arm64',
+            '@relaywash/wash-linux-x64',
+            '@relaywash/wash-win32-x64',
+          ];
+
+          function escapeRegExp(value) {
+            return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          }
+
+          function extractChangelogBody(path, header) {
+            if (!existsSync(path)) return '';
+            const raw = readFileSync(path, 'utf8');
+            const headerRe = new RegExp(`^## \\[${escapeRegExp(header)}\\][^\\n]*\\n`, 'm');
+            const match = raw.match(headerRe);
+            if (!match || match.index === undefined) return '';
+            const start = match.index + match[0].length;
+            const tail = raw.slice(start);
+            const next = tail.match(/^## \[/m);
+            const end = next && next.index !== undefined ? start + next.index : raw.length;
+            return raw.slice(start, end).trim();
+          }
+
+          const rootNotes =
+            extractChangelogBody('CHANGELOG.md', version) ||
+            extractChangelogBody('CHANGELOG.md', 'Unreleased');
+
+          const lines = ['## Packages', ''];
+          lines.push(`- \`relaywash@${version}\``);
+          for (const name of platformPackages) {
+            lines.push(`- \`${name}@${version}\``);
+          }
+
+          lines.push('', '## Release Notes', '');
+          if (rootNotes.length > 0) {
+            lines.push(rootNotes);
+          } else {
+            lines.push('_No changelog entry was generated for this release._');
+          }
+
+          writeFileSync('/tmp/release-notes.md', `${lines.join('\n').trimEnd()}\n`);
+          NODE
+      - name: create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.resolve-version.outputs.version }}
+          name: relaywash@${{ needs.resolve-version.outputs.version }}
+          body_path: /tmp/release-notes.md
+          prerelease: ${{ needs.resolve-version.outputs.prerelease }}
