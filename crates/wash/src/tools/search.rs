@@ -48,7 +48,8 @@ fn run(args: &Value) -> Result<ToolResult> {
     // Profile-aware defaults: when the agent omits an arg, fall back to the active
     // per-repo profile if it has a value, else the static default. The tool *schema*
     // never changes (cache safety — see src/profile.rs).
-    let prof = &profile::get().tools.search;
+    let active_profile = profile::get();
+    let prof = &active_profile.tools.search;
     let max_results = args
         .get("maxResults")
         .and_then(|v| v.as_u64())
