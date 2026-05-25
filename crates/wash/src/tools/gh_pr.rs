@@ -302,7 +302,17 @@ fn comments(cwd: &std::path::Path, args: &Value) -> Result<Value> {
         .map(|n| n as usize)
         .unwrap_or(DEFAULT_MAX_COMMENTS);
     let repo = args.get("repo").and_then(|v| v.as_str()).map(String::from);
-    let repo_seg = repo.unwrap_or_else(|| "{owner}/{repo}".to_string());
+    // `gh api` takes a literal URL — unlike `gh pr <op>`, it doesn't substitute
+    // `{owner}/{repo}` from cwd. Resolve it ourselves so omitting `repo` behaves the
+    // same way the other ops do, and fail loudly if we can't.
+    let repo_seg = match repo {
+        Some(r) => r,
+        None => crate::git::github_owner_repo_from_cwd(cwd).ok_or_else(|| {
+            anyhow!(
+                "GhPR comments requires `repo` (owner/name) when cwd has no parseable GitHub remote.origin.url"
+            )
+        })?,
+    };
     let review_url = format!("repos/{repo_seg}/pulls/{number}/comments");
     let issue_url = format!("repos/{repo_seg}/issues/{number}/comments");
     let review_raw = gh(cwd, &["api", &review_url])?;
@@ -385,5 +395,24 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert!(!files[0].truncated);
         assert_eq!(files[0].added, 1);
+    }
+
+    #[test]
+    fn comments_errors_when_repo_unresolvable() {
+        // Empty temp dir = no git remote = nothing the helper can recover. The fix
+        // must surface this as a clear error rather than emit a broken `gh api`
+        // call with a literal `{owner}/{repo}` segment.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let args = json!({"op":"comments","number":1});
+        let err = comments(tmp.path(), &args).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("repo"),
+            "expected error to mention `repo`, got: {msg}"
+        );
+        assert!(
+            !msg.contains("{owner}"),
+            "error should not leak the literal placeholder, got: {msg}"
+        );
     }
 }
