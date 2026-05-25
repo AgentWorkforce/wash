@@ -5,6 +5,13 @@ lockstep and do not carry separate narrative changelogs.
 
 ## [Unreleased]
 
+### Added
+
+- `relaywash__Search`: `maxTotalBytes` schema arg bounds cumulative snippet
+  bytes across hits, with `truncated` flipping once the budget is exhausted.
+  The first hit always lands so a single oversize snippet never produces a
+  silent empty result.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
