@@ -12,6 +12,12 @@ lockstep and do not carry separate narrative changelogs.
   The first hit always lands so a single oversize snippet never produces a
   silent empty result.
 
+### Fixed
+
+- `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
+  when the `repo` arg is omitted, replacing the broken literal-placeholder
+  fallback that produced 404s.
+
 ## [0.1.0] - 2026-05-25
 
 ### Added
