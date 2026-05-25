@@ -7,8 +7,9 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Changed
 
-- Active profile reloads mid-session when its file changes, so adaptive
-  defaults pick up new writes without a CLI restart.
+- `wash` profile cache now reloads mid-session when the profile file changes,
+  so adaptive defaults pick up new writes without a CLI restart. A broken
+  per-repo profile falls through to the global profile instead of masking it.
 
 ### Fixed
 

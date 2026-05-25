@@ -76,79 +76,76 @@ pub struct HookSettings {
     pub edit_batching_nudge: Option<String>,
 }
 
-/// Cache entry: the loaded `Profile`, the path it was loaded from, and the mtime that
-/// path had at load time. `mtime` is `None` when the source file was absent (in that
-/// case the cached value is the empty default and we'll re-check on next access).
+/// Cache entry: the loaded `Profile` plus the cache key that produced it. The key is
+/// the full priority-ordered list of candidate paths we consult and each candidate's
+/// mtime at load time. Tracking every candidate (not just the chosen one) means
+/// state changes anywhere in the chain — a previously-missing higher-priority file
+/// appearing, a broken file getting rewritten — invalidate the cache.
 #[derive(Clone)]
 struct CacheEntry {
     profile: Arc<Profile>,
-    path: Option<PathBuf>,
-    mtime: Option<SystemTime>,
+    candidates: Vec<PathBuf>,
+    mtimes: Vec<Option<SystemTime>>,
 }
 
 /// Process-level mtime-watched cache. The MCP server lives for the whole session, so a
 /// profile written mid-session (e.g., by the future `wash learn aggregate` aggregator)
-/// must be picked up without restart. We pay one `metadata()` syscall per access and
-/// only re-parse JSON when the file's mtime advances.
+/// must be picked up without restart. We pay one `metadata()` syscall per candidate
+/// per access and only re-parse JSON when something changes.
 fn cached() -> &'static RwLock<Option<CacheEntry>> {
     static C: RwLock<Option<CacheEntry>> = RwLock::new(None);
     &C
 }
 
-/// Resolve the active profile for the current process. Reads `RELAYWASH_PROFILE_PATH`
-/// if set (test/override seam), otherwise derives the per-repo path from CWD's git
-/// remote, otherwise the global profile, otherwise empty defaults.
+/// Resolve the active profile for the current process. Walks the candidate list in
+/// priority order — `RELAYWASH_PROFILE_PATH` if set, else per-repo, else global — and
+/// takes the first file that *successfully loads*. A file that exists but fails to
+/// parse is skipped so a broken per-repo profile does not silently mask a valid global
+/// one. The empty default is returned when nothing loads.
 ///
-/// On each call we stat the resolved path's mtime; if it matches the cached value we
-/// return the cached `Arc` cheaply, otherwise we reload and update the cache.
+/// We cache against the full candidate list plus each candidate's current mtime, so any
+/// mtime change (including missing → present transitions) invalidates the cache.
 pub fn get() -> Arc<Profile> {
-    let path = resolve_path();
-    let current_mtime = path.as_ref().and_then(|p| mtime_of(p));
+    let candidates = candidate_paths();
+    let mtimes: Vec<Option<SystemTime>> = candidates.iter().map(|p| mtime_of(p)).collect();
 
-    // Fast path: cached entry exists, points at the same path, and mtime is unchanged.
     {
         let guard = cached().read().expect("profile cache poisoned");
         if let Some(entry) = guard.as_ref() {
-            if entry.path == path && entry.mtime == current_mtime {
+            if entry.candidates == candidates && entry.mtimes == mtimes {
                 return entry.profile.clone();
             }
         }
     }
 
-    // Slow path: (re)load and replace the cache.
-    let profile = Arc::new(match path.as_deref() {
-        Some(p) => load_from(p).unwrap_or_default(),
-        None => Profile::default(),
-    });
+    let profile = Arc::new(
+        candidates
+            .iter()
+            .find_map(|p| load_from(p))
+            .unwrap_or_default(),
+    );
+
     let new_entry = CacheEntry {
         profile: profile.clone(),
-        path,
-        mtime: current_mtime,
+        candidates,
+        mtimes,
     };
     *cached().write().expect("profile cache poisoned") = Some(new_entry);
     profile
 }
 
-/// Resolve which path the active profile *would* be loaded from, without reading it.
-/// Returns `None` only when no candidate exists (e.g., no env override, no git remote,
-/// no `HOME` — extremely unusual; the empty default profile is used in that case).
-fn resolve_path() -> Option<PathBuf> {
+/// Build the prioritized list of candidate profile paths. The env override short-
+/// circuits the fallback chain so tests and explicit users can target one specific file.
+fn candidate_paths() -> Vec<PathBuf> {
     if let Ok(path) = std::env::var("RELAYWASH_PROFILE_PATH") {
-        return Some(PathBuf::from(path));
+        return vec![PathBuf::from(path)];
     }
     let home = ledger_home();
     let key = current_repo_key();
-    let per_repo = home.join("profiles").join(format!("{key}.json"));
-    if per_repo.exists() {
-        return Some(per_repo);
-    }
-    let global = home.join("profiles").join("_global.json");
-    if global.exists() {
-        return Some(global);
-    }
-    // Even when neither file exists yet, return the per-repo path so a subsequent
-    // mid-session write is detected by the mtime watch on the next `get()` call.
-    Some(per_repo)
+    vec![
+        home.join("profiles").join(format!("{key}.json")),
+        home.join("profiles").join("_global.json"),
+    ]
 }
 
 fn mtime_of(path: &Path) -> Option<SystemTime> {
@@ -236,13 +233,29 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::TempDir;
 
-    /// `RELAYWASH_PROFILE_PATH` is process-wide and `cached()` is a single static, so
-    /// tests that exercise `get()` must run serially to avoid clobbering each other.
+    /// `RELAYWASH_PROFILE_PATH`, `RELAYBURN_HOME`, and `cached()` are all process-wide,
+    /// so tests that exercise `get()` must run serially to avoid clobbering each other.
     static GET_SERIAL: Mutex<()> = Mutex::new(());
 
     /// Clear the process-level cache so each `get()` test starts from a clean slate.
     fn reset_cache() {
         *cached().write().unwrap() = None;
+    }
+
+    /// RAII helper: clears the env vars `get()` reads and the cache on drop, so a test
+    /// that panics mid-flight cannot leak global state into a later test sharing
+    /// `GET_SERIAL`. Used at the top of every test that mutates these globals.
+    struct GetTestCleanup;
+    impl Drop for GetTestCleanup {
+        fn drop(&mut self) {
+            // SAFETY: `GET_SERIAL` is held for the duration of the test, so no other
+            // thread is touching these env vars while we clear them.
+            unsafe {
+                std::env::remove_var("RELAYWASH_PROFILE_PATH");
+                std::env::remove_var("RELAYBURN_HOME");
+            }
+            reset_cache();
+        }
     }
 
     #[test]
@@ -300,6 +313,7 @@ mod tests {
     #[test]
     fn get_reloads_when_profile_file_mtime_changes() {
         let _g = GET_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = GetTestCleanup;
         reset_cache();
 
         let tmp = TempDir::new().unwrap();
@@ -338,11 +352,6 @@ mod tests {
             Some(777),
             "profile cache failed to reload after mtime advance"
         );
-
-        unsafe {
-            std::env::remove_var("RELAYWASH_PROFILE_PATH");
-        }
-        reset_cache();
     }
 
     /// Cheapness check: two `get()` calls with no filesystem change return the same
@@ -350,6 +359,7 @@ mod tests {
     #[test]
     fn get_returns_cached_instance_when_unchanged() {
         let _g = GET_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = GetTestCleanup;
         reset_cache();
 
         let tmp = TempDir::new().unwrap();
@@ -370,11 +380,46 @@ mod tests {
             "second get() should reuse the cached Arc when mtime is unchanged"
         );
         assert_eq!(a.tools.search.max_results, Some(42));
+    }
 
+    /// Regression: a per-repo profile that exists but fails to parse must not mask the
+    /// global profile. The previous resolve-then-load split short-circuited on
+    /// `exists()` and silently returned the empty default when the per-repo file was
+    /// malformed; now the loader walks the candidate list and skips files that fail to
+    /// parse.
+    #[test]
+    fn get_falls_back_to_global_when_per_repo_is_unreadable() {
+        let _g = GET_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let _cleanup = GetTestCleanup;
+        reset_cache();
+
+        let tmp = TempDir::new().unwrap();
+        let profiles = tmp.path().join("profiles");
+        std::fs::create_dir_all(&profiles).unwrap();
+
+        // SAFETY: `GET_SERIAL` serializes env-var access across tests.
         unsafe {
+            std::env::set_var("RELAYBURN_HOME", tmp.path());
+            // Make sure no leftover override from another test interferes.
             std::env::remove_var("RELAYWASH_PROFILE_PATH");
         }
-        reset_cache();
+
+        // Resolve the per-repo key the same way `get()` will, so we can plant the
+        // malformed file at exactly the path that gets stat'd.
+        let key = current_repo_key();
+        std::fs::write(profiles.join(format!("{key}.json")), "{ not valid json").unwrap();
+        std::fs::write(
+            profiles.join("_global.json"),
+            r#"{"version":1,"tools":{"search":{"maxResults":999}}}"#,
+        )
+        .unwrap();
+
+        let p = get();
+        assert_eq!(
+            p.tools.search.max_results,
+            Some(999),
+            "broken per-repo profile should fall through to the global profile",
+        );
     }
 
     /// Helper: set a file's mtime. We avoid the `filetime` crate dep by writing the
