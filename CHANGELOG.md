@@ -10,6 +10,10 @@ lockstep and do not carry separate narrative changelogs.
 - `wash bench run` / `wash bench compare`: evaluation harness that drives the
   same MCP tool handlers, captures bytes / tokens / call count per task, and
   fails comparisons on regressions. A `--fast` flag runs the CI subset.
+- `relaywash__Search`: `maxTotalBytes` schema arg bounds cumulative snippet
+  bytes across hits, with `truncated` flipping once the budget is exhausted.
+  The first hit always lands so a single oversize snippet never produces a
+  silent empty result.
 
 ### Changed
 
@@ -22,6 +26,9 @@ lockstep and do not carry separate narrative changelogs.
 - `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
   when the `repo` arg is omitted, replacing the broken literal-placeholder
   fallback that produced 404s.
+- `relaywash__Read`: signature augmentation matches by source line, fixing the
+  wrong-region splice when two signatures shared a prefix (e.g. `fn foo` and
+  `fn foobar`).
 
 ## [0.1.0] - 2026-05-25
 
