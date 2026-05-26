@@ -1,0 +1,46 @@
+{
+  "name": "large-codebase",
+  "description": "Search a noisy 3900+ line codebase. Verifies result count and total bytes; records current diversity behavior as a baseline ahead of issue #36.",
+  "corpus": "fixtures/corpus/large-codebase",
+  "status": "implemented",
+  "fastSubset": true,
+  "steps": [
+    {
+      "name": "search-noisy-symbol",
+      "tool": "Search",
+      "args": { "symbol": "computeTotal", "maxResults": 20, "contextLines": 1 }
+    },
+    {
+      "name": "drill-into-engine",
+      "tool": "Read",
+      "args": { "path": "src/billing-engine.ts", "mode": "range", "range": [25, 80] }
+    }
+  ],
+  "expectations": [
+    {
+      "kind": "file-in-top-results",
+      "name": "engine-in-top-search-hits",
+      "step": "search-noisy-symbol",
+      "files": ["src/billing-engine.ts"],
+      "topN": 3
+    },
+    {
+      "kind": "min-hit-count",
+      "name": "noisy-search-finds-matches",
+      "step": "search-noisy-symbol",
+      "min": 1
+    },
+    {
+      "kind": "max-hit-count",
+      "name": "results-stay-under-cap",
+      "step": "search-noisy-symbol",
+      "max": 20
+    },
+    {
+      "kind": "line-range-read",
+      "name": "computeTotal-callsite-in-range",
+      "step": "drill-into-engine",
+      "ranges": [[20, 100]]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 pub mod accounting;
 pub mod ast;
+pub mod bench;
 pub mod fuzzy;
 pub mod git;
 pub mod hooks;

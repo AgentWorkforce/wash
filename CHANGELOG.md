@@ -7,6 +7,9 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Added
 
+- `wash bench run` / `wash bench compare`: evaluation harness that drives the
+  same MCP tool handlers, captures bytes / tokens / call count per task, and
+  fails comparisons on regressions. A `--fast` flag runs the CI subset.
 - Session-stop hook writes per-turn accounting records to
   `${RELAYBURN_HOME}/turns/<session>.jsonl` with model, token usage, estimated
   cost, tool list, and a deterministic task category. Ingestion is idempotent
