@@ -1,3 +1,4 @@
+pub mod accounting;
 pub mod ast;
 pub mod bench;
 pub mod fuzzy;
