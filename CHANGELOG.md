@@ -7,6 +7,10 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Added
 
+- Session-stop hook writes per-turn accounting records to
+  `${RELAYBURN_HOME}/turns/<session>.jsonl` with model, token usage, estimated
+  cost, tool list, and a deterministic task category. Ingestion is idempotent
+  across repeated Stop runs.
 - `wash hook pre-compact` / `post-compact`: snapshot the transcript on
   compaction and append a `kind: "compaction"` event to the session ledger
   with per-tool survival counts and estimated token deltas.
