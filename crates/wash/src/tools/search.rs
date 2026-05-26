@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use crate::mcp::{Tool, ToolResult};
 use crate::meta::Meta;
 use crate::profile;
-use crate::search::{DEFAULT_MAX_FILE_BYTES, SearchHit, SearchOpts};
+use crate::search::{DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_TOTAL_BYTES, SearchHit, SearchOpts};
 use crate::state;
 
 const DESCRIPTION: &str = "Combined glob + grep + read. Returns ranked snippets across matched files. Use this instead of chaining Glob → Grep → Read. Always returns snippets only, never full file contents.";
@@ -29,6 +29,7 @@ pub fn tool() -> Tool {
                 "maxResults": { "type": "integer", "minimum": 1, "default": DEFAULT_MAX_RESULTS },
                 "contextLines": { "type": "integer", "minimum": 0, "default": DEFAULT_CONTEXT_LINES },
                 "maxFileBytes": { "type": "integer", "minimum": 0, "description": "Skip files larger than this. 0 disables the cap. Default ~10MB." },
+                "maxTotalBytes": { "type": "integer", "minimum": 0, "description": "Total snippet bytes returned across all hits. 0 disables. Default ~1MB. When exceeded, response sets truncated=true." },
                 "rank": { "type": "string", "enum": ["matches","mtime","path-depth"], "default": "matches" },
                 "cwd": { "type": "string", "description": "Search root. Defaults to process.cwd()." }
             },
@@ -72,6 +73,16 @@ fn run(args: &Value) -> Result<ToolResult> {
             .unwrap_or(DEFAULT_MAX_FILE_BYTES);
         if raw == 0 { None } else { Some(raw) }
     };
+    // Same convention as maxFileBytes: 0 disables, omitted falls through to the
+    // profile then the static default (~1MB).
+    let max_total_bytes: Option<u64> = {
+        let raw = args
+            .get("maxTotalBytes")
+            .and_then(|v| v.as_u64())
+            .or(prof.max_total_bytes)
+            .unwrap_or(DEFAULT_MAX_TOTAL_BYTES);
+        if raw == 0 { None } else { Some(raw) }
+    };
     let rank = args
         .get("rank")
         .and_then(|v| v.as_str())
@@ -103,11 +114,17 @@ fn run(args: &Value) -> Result<ToolResult> {
         paths,
         context_lines,
         max_file_bytes,
+        max_total_bytes,
     })?;
 
     let pattern_was_used = pattern.is_some();
+    // `truncated` is the union of two truncation signals: the engine cut hits to honor
+    // the byte budget (`output.truncated`) and/or the tool layer cut to honor
+    // `maxResults`. Either way the caller knows the response is not complete.
+    let byte_truncated = output.truncated;
     let ranked = rank_results(output.hits, &rank, &cwd);
-    let truncated = ranked.len() > max_results;
+    let count_truncated = ranked.len() > max_results;
+    let truncated = byte_truncated || count_truncated;
     let results: Vec<SearchHit> = ranked.into_iter().take(max_results).collect();
 
     // Cap `skipped` so a monorepo with thousands of vendored bundles or binaries

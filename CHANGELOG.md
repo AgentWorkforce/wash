@@ -5,6 +5,13 @@ lockstep and do not carry separate narrative changelogs.
 
 ## [Unreleased]
 
+### Added
+
+- `relaywash__Search`: `maxTotalBytes` schema arg bounds cumulative snippet
+  bytes across hits, with `truncated` flipping once the budget is exhausted.
+  The first hit always lands so a single oversize snippet never produces a
+  silent empty result.
+
 ### Changed
 
 - `wash` profile cache now reloads mid-session when the profile file changes,
