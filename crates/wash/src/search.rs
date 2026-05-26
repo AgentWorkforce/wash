@@ -14,6 +14,11 @@ use crate::walk::{Walk, relativize};
 /// skipped and reported in `SearchOutput::skipped` so the caller can react.
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Default cap on the total snippet bytes returned across all hits. Without this,
+/// a single file with one match but a huge surrounding snippet could blow the
+/// response budget even though `maxResults` is satisfied.
+pub const DEFAULT_MAX_TOTAL_BYTES: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchHit {
     pub path: String,
@@ -39,6 +44,10 @@ pub struct SkippedFile {
 pub struct SearchOutput {
     pub hits: Vec<SearchHit>,
     pub skipped: Vec<SkippedFile>,
+    /// True when the total-bytes budget was exhausted and we stopped appending hits.
+    /// A `false` here does *not* imply all hits were returned — the tool layer applies
+    /// its own `maxResults` truncation on top.
+    pub truncated: bool,
 }
 
 pub struct SearchOpts {
@@ -48,6 +57,9 @@ pub struct SearchOpts {
     pub context_lines: u32,
     /// Per-file size cap; files over the limit are reported in `skipped`. `None` disables.
     pub max_file_bytes: Option<u64>,
+    /// Total snippet bytes across all hits. Once exceeded, remaining hits are dropped
+    /// and `SearchOutput::truncated` is set. `None` disables.
+    pub max_total_bytes: Option<u64>,
 }
 
 pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
@@ -65,7 +77,7 @@ pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
                 match_count: 0,
             })
             .collect();
-        return Ok(SearchOutput { hits, skipped: Vec::new() });
+        return Ok(SearchOutput { hits, skipped: Vec::new(), truncated: false });
     };
 
     let matcher = RegexMatcher::new_line_matcher(&pattern)?;
@@ -79,7 +91,15 @@ pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
 
     let mut hits = Vec::new();
     let mut skipped: Vec<SkippedFile> = Vec::new();
+    // Running tally of snippet bytes emitted. We approximate the on-the-wire response
+    // size by summing the per-hit snippet text. Path/line fields are negligible next
+    // to the snippet body, so a strict snippet-byte budget tracks total bytes well.
+    let mut total_bytes: u64 = 0;
+    let mut truncated = false;
     for abs in &files {
+        if truncated {
+            break;
+        }
         // Size guard: skip large files without opening them, before we hand them to the
         // searcher. A 500MB log doesn't get streamed line-by-line just to be discarded.
         if let Some(limit) = opts.max_file_bytes {
@@ -110,6 +130,16 @@ pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
             continue;
         }
         for snippet in snippets {
+            if let Some(budget) = opts.max_total_bytes {
+                let cost = snippet.text.len() as u64;
+                // Always accept the first hit so a single oversized snippet still
+                // surfaces *something* — better than silently empty results.
+                if !hits.is_empty() && total_bytes.saturating_add(cost) > budget {
+                    truncated = true;
+                    break;
+                }
+                total_bytes = total_bytes.saturating_add(cost);
+            }
             hits.push(SearchHit {
                 path: rel.clone(),
                 line_start: snippet.line_start,
@@ -119,7 +149,7 @@ pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
             });
         }
     }
-    Ok(SearchOutput { hits, skipped })
+    Ok(SearchOutput { hits, skipped, truncated })
 }
 
 struct HitSink {
@@ -244,6 +274,7 @@ mod tests {
             paths: vec!["**/*.ts".into()],
             context_lines: 1,
             max_file_bytes: Some(DEFAULT_MAX_FILE_BYTES),
+            max_total_bytes: None,
         })
         .unwrap();
         assert!(!out.hits.is_empty(), "expected hits");
@@ -264,6 +295,7 @@ mod tests {
             paths: vec!["**/*.ts".into()],
             context_lines: 0,
             max_file_bytes: Some(DEFAULT_MAX_FILE_BYTES),
+            max_total_bytes: None,
         })
         .unwrap();
         let paths: Vec<&str> = out.hits.iter().map(|h| h.path.as_str()).collect();
@@ -290,6 +322,7 @@ mod tests {
             paths: vec!["**/*".into()],
             context_lines: 0,
             max_file_bytes: Some(DEFAULT_MAX_FILE_BYTES),
+            max_total_bytes: None,
         })
         .unwrap();
 
@@ -320,6 +353,7 @@ mod tests {
             paths: vec!["**/*".into()],
             context_lines: 0,
             max_file_bytes: Some(256),
+            max_total_bytes: None,
         })
         .unwrap();
 
@@ -345,10 +379,86 @@ mod tests {
             paths: vec!["**/*".into()],
             context_lines: 0,
             max_file_bytes: None,
+            max_total_bytes: None,
         })
         .unwrap();
         let hit_paths: Vec<&str> = out.hits.iter().map(|h| h.path.as_str()).collect();
         assert!(hit_paths.contains(&"huge.txt"));
         assert!(out.skipped.is_empty());
+    }
+
+    #[test]
+    fn truncates_when_total_bytes_exceeded() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        // Twenty files, each with several matches. With a tight byte budget we should
+        // get fewer hits than would otherwise be emitted, and `truncated` should flip.
+        for i in 0..20 {
+            let body = (0..10)
+                .map(|j| format!("needle hit {i}-{j}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            fs::write(p.join(format!("f{i}.txt")), body).unwrap();
+        }
+
+        let out = run(SearchOpts {
+            cwd: p.to_path_buf(),
+            pattern: Some("needle".into()),
+            paths: vec!["**/*".into()],
+            context_lines: 0,
+            max_file_bytes: Some(DEFAULT_MAX_FILE_BYTES),
+            max_total_bytes: Some(200),
+        })
+        .unwrap();
+
+        assert!(out.truncated, "expected truncated=true once byte budget exceeded");
+        let total: usize = out.hits.iter().map(|h| h.snippet.len()).sum();
+        // We allow one hit to overshoot the budget (the always-accept-first rule),
+        // but the total should stay close to it — not a free-for-all.
+        assert!(
+            total <= 500,
+            "expected truncation to bound total snippet bytes near budget, got {total}",
+        );
+        // Sanity: without the budget we'd get >>20 hits.
+        assert!(out.hits.len() < 200, "got {} hits, budget should have cut them", out.hits.len());
+    }
+
+    #[test]
+    fn no_total_bytes_limit_when_none() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        for i in 0..5 {
+            fs::write(p.join(format!("f{i}.txt")), "needle\nneedle\n").unwrap();
+        }
+        let out = run(SearchOpts {
+            cwd: p.to_path_buf(),
+            pattern: Some("needle".into()),
+            paths: vec!["**/*".into()],
+            context_lines: 0,
+            max_file_bytes: None,
+            max_total_bytes: None,
+        })
+        .unwrap();
+        assert!(!out.truncated);
+        assert!(out.hits.len() >= 5);
+    }
+
+    #[test]
+    fn first_hit_always_returned_even_if_oversize() {
+        // A single huge snippet should still come back — better one hit than none.
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        let body = format!("needle {}", "x".repeat(2000));
+        fs::write(p.join("a.txt"), body).unwrap();
+        let out = run(SearchOpts {
+            cwd: p.to_path_buf(),
+            pattern: Some("needle".into()),
+            paths: vec!["**/*".into()],
+            context_lines: 0,
+            max_file_bytes: None,
+            max_total_bytes: Some(10),
+        })
+        .unwrap();
+        assert_eq!(out.hits.len(), 1, "first hit must be emitted even if it busts the budget");
     }
 }
