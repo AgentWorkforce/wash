@@ -164,6 +164,11 @@ fn augment_with_small_bodies(
     }
     let full_lines: Vec<&str> = full_text.split('\n').collect();
     let mut sig_lines: Vec<String> = sigs.content.split('\n').map(String::from).collect();
+    // `source_lines` is aligned with `sig_lines`: same length, with each entry the
+    // 1-based source line that produced that rendered line (or 0 for synthetic lines
+    // such as the trailing `}` after an elided body).
+    let mut source_lines: Vec<u32> = sigs.source_lines.clone();
+    debug_assert_eq!(source_lines.len(), sig_lines.len());
 
     for entry in &sigs.line_map {
         let header_idx = (entry.line as usize).saturating_sub(1);
@@ -178,16 +183,27 @@ fn augment_with_small_bodies(
         if !matches_searched && body_len > small_function_lines {
             continue;
         }
-        let header_line = full_lines[header_idx];
-        let sig_idx = sig_lines.iter().position(|l| l.starts_with(header_line));
-        let Some(sig_idx) = sig_idx else { continue };
+        // Locate the rendered header by exact source line — not `starts_with`, which
+        // picks the wrong header when two share a prefix (e.g., `fn foo` vs `fn foobar`).
+        let Some(sig_idx) = source_lines.iter().position(|&r| r == entry.line) else {
+            continue;
+        };
         let full_body: Vec<String> = full_lines[header_idx..=body_end]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        // Replace the signature header + the elided `}` line with the full body.
-        let to_replace = if sig_idx + 1 < sig_lines.len() { 2 } else { 1 };
+        // Replace the signature header + the elided `}` line with the full body. The
+        // synthetic `}` we splice over carries source line 0; pad `source_lines` so it
+        // stays aligned with `sig_lines` after the replacement.
+        let to_replace = if sig_idx + 1 < sig_lines.len() && source_lines[sig_idx + 1] == 0 {
+            2
+        } else {
+            1
+        };
+        let body_rows: Vec<u32> =
+            (header_idx..=body_end).map(|i| i as u32 + 1).collect();
         sig_lines.splice(sig_idx..sig_idx + to_replace, full_body);
+        source_lines.splice(sig_idx..sig_idx + to_replace, body_rows);
     }
     sig_lines.join("\n")
 }
