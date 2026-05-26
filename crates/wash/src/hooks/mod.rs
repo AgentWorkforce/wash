@@ -2,6 +2,7 @@
 //! stdout, and exits 0. Wired into `hooks/hooks.json` via the `wash hook <kind>` subcommand.
 
 mod builtin_block;
+mod compaction;
 mod edit_batching_nudge;
 mod post_tool_observe;
 mod session_start;
@@ -33,6 +34,8 @@ pub fn dispatch(kind: &str, payload: &serde_json::Value, out: &mut impl Write) -
         "post-tool-observe" => post_tool_observe::run(payload, out),
         "session-start" => session_start::run(payload, out),
         "session-stop" => session_stop::run(payload, out),
+        "pre-compact" => compaction::run_pre(payload, out),
+        "post-compact" => compaction::run_post(payload, out),
         other => Err(anyhow!("unknown hook kind: {other}")),
     }
 }

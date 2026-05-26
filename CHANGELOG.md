@@ -7,6 +7,9 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Added
 
+- `wash hook pre-compact` / `post-compact`: snapshot the transcript on
+  compaction and append a `kind: "compaction"` event to the session ledger
+  with per-tool survival counts and estimated token deltas.
 - `relaywash__Search`: `maxTotalBytes` schema arg bounds cumulative snippet
   bytes across hits, with `truncated` flipping once the budget is exhausted.
   The first hit always lands so a single oversize snippet never produces a
