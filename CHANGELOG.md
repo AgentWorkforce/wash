@@ -30,6 +30,7 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Fixed
 
+- `relaywash__Edit` can now create files: pass an edit with empty `oldText` and the full contents as `newText`. The `Write` redirect message explains the recipe.
 - `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
   when the `repo` arg is omitted, replacing the broken literal-placeholder
   fallback that produced 404s.

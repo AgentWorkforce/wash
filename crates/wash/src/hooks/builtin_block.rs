@@ -24,11 +24,19 @@ pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
         "NotebookEdit" => "relaywash__Edit",
         _ => return write_continue(out),
     };
+    let reason = if tool == "Write" || tool == "NotebookEdit" {
+        format!(
+            "relaywash: built-in {tool} is disabled. Use {replacement} instead. \
+             (create files by passing an edit with empty oldText)"
+        )
+    } else {
+        format!("relaywash: built-in {tool} is disabled. Use {replacement} instead.")
+    };
     write_json(
         out,
         &json!({
             "decision": "block",
-            "reason": format!("relaywash: built-in {tool} is disabled. Use {replacement} instead."),
+            "reason": reason,
         }),
     )
 }
