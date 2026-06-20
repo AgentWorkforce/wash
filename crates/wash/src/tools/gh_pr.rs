@@ -4,11 +4,16 @@ use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::mcp::{Tool, ToolResult};
 use crate::process;
 
 const DESCRIPTION: &str = "Structured PR access (replaces gh pr view/list/diff and gh api repos/.../pulls). Returns a small subset of fields by default; use `fields` to expand. Bodies and diff hunks are truncated.";
+
+/// `gh` makes network calls; 120s tolerates a slow API round-trip but bounds a
+/// hang (e.g. an interactive auth prompt) that would otherwise stall the server.
+const GH_TIMEOUT: Duration = Duration::from_secs(120);
 
 const VIEW_DEFAULT_FIELDS: &[&str] = &[
     "number",
@@ -80,8 +85,11 @@ fn run(args: &Value) -> Result<ToolResult> {
 /// `comments` op fans out into two API calls; the baseline is the sum (see
 /// `process::subprocess_baseline`).
 fn gh(cwd: &std::path::Path, args: &[&str], bytes: &mut u64) -> Result<String> {
-    let out = process::run("gh", args, cwd)?;
+    let out = process::run("gh", args, cwd, GH_TIMEOUT)?;
     *bytes += out.baseline;
+    if out.timed_out {
+        return Err(anyhow!("gh {} timed out after {}s", args.join(" "), GH_TIMEOUT.as_secs()));
+    }
     if out.status != Some(0) {
         let err = if !out.stderr.is_empty() { &out.stderr } else { &out.stdout };
         return Err(anyhow!("gh {} failed: {}", args.join(" "), err.trim()));

@@ -6,11 +6,15 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::logs;
 use crate::mcp::{Tool, ToolResult};
 use crate::process;
+
+/// Builds and test suites can legitimately run for many minutes; 15 minutes
+/// bounds a hung command without clipping real work.
+const BUILD_TIMEOUT: Duration = Duration::from_secs(900);
 
 const DESCRIPTION: &str = "Run the project build and return a tiny structured response. Successful builds return one line; failing tsc/cargo/go builds return parsed `errors[]`; other builders return an `errorTail`.";
 
@@ -69,7 +73,7 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
 
     let t0 = Instant::now();
-    let captured = process::run(&cmd[0], &cmd[1..], &cwd);
+    let captured = process::run(&cmd[0], &cmd[1..], &cwd, BUILD_TIMEOUT);
     let duration = t0.elapsed().as_millis() as u64;
     let captured = match captured {
         Ok(c) => c,
@@ -83,10 +87,32 @@ fn run(args: &Value) -> Result<ToolResult> {
             }));
         }
     };
-    let (stdout, stderr, status_code, baseline) =
-        (captured.stdout, captured.stderr, captured.status, captured.baseline);
+    let (stdout, stderr, status_code, baseline, timed_out) = (
+        captured.stdout,
+        captured.stderr,
+        captured.status,
+        captured.baseline,
+        captured.timed_out,
+    );
     let raw = format!("{stdout}\n{stderr}");
     let log_path = logs::write("build", &raw).ok();
+
+    if timed_out {
+        let tail = tail_lines_of(&raw, tail_lines);
+        return ok_value_with_baseline(
+            json!({
+                "builder": builder,
+                "success": false,
+                "duration": duration,
+                "errorTail": format!(
+                    "timed out after {}s; partial output:\n{tail}",
+                    BUILD_TIMEOUT.as_secs()
+                ),
+                "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            }),
+            baseline,
+        );
+    }
 
     let success = status_code == Some(0);
     if success {

@@ -6,11 +6,14 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::logs;
 use crate::mcp::{Tool, ToolResult};
 use crate::process;
+
+/// Test suites can run long; 15 minutes bounds a hang without clipping real work.
+const TEST_TIMEOUT: Duration = Duration::from_secs(900);
 
 const DESCRIPTION: &str = "Run tests and return structured counts + failure summaries. Use `failuresOnly` (default true) to elide passing-test noise. Use `getFailureLog: <name>` to fetch the log slice for a single failure from a previous run.";
 
@@ -96,7 +99,7 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
 
     let t0 = Instant::now();
-    let captured = process::run(&cmd[0], &cmd[1..], &cwd);
+    let captured = process::run(&cmd[0], &cmd[1..], &cwd, TEST_TIMEOUT);
     let duration = t0.elapsed().as_millis() as u64;
     let captured = match captured {
         Ok(c) => c,
@@ -113,7 +116,8 @@ fn run(args: &Value) -> Result<ToolResult> {
             }));
         }
     };
-    let (stdout, stderr, baseline) = (captured.stdout, captured.stderr, captured.baseline);
+    let (stdout, stderr, baseline, timed_out) =
+        (captured.stdout, captured.stderr, captured.baseline, captured.timed_out);
     let raw = format!("{stdout}{stderr}");
     let log_path = logs::write("testrun", &raw).ok();
 
@@ -124,7 +128,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         parsed.failures.clone()
     };
 
-    ok_value_with_baseline(json!({
+    let mut result = json!({
         "runner": runner,
         "passed": parsed.passed,
         "failed": parsed.failed,
@@ -132,7 +136,18 @@ fn run(args: &Value) -> Result<ToolResult> {
         "duration": duration,
         "failures": failures,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-    }), baseline)
+    });
+    if timed_out {
+        // Keep the partial counts parsed from whatever ran before the kill; the
+        // `error` field tells the model the run was cut short.
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert(
+                "error".into(),
+                json!(format!("timed out after {}s", TEST_TIMEOUT.as_secs())),
+            );
+        }
+    }
+    ok_value_with_baseline(result, baseline)
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {

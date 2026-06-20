@@ -7,10 +7,16 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use std::time::Duration;
+
 use crate::mcp::Tool;
 use crate::process;
 
 const DESCRIPTION: &str = "Structured git status/diff/log/show. Returns file lists + summary stats; per-file diffs are truncated. Use this instead of raw `git status`/`git diff`/`git log`/`git show` Bash calls.";
+
+/// Local git plumbing is fast; 60s bounds a hang (e.g. a pager or credential
+/// prompt that slipped through) without clipping a large `diff`/`log`.
+const GIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 const DEFAULT_MAX_FILES: usize = 50;
 const DEFAULT_MAX_LINES: usize = 200;
@@ -127,9 +133,12 @@ fn run(a: Args) -> Result<(Value, u64)> {
 /// A GitState op fans out into several git calls; the savings baseline is the sum of
 /// what each would have cost via vanilla Bash (see `process::subprocess_baseline`).
 fn git(cwd: &str, args: &[&str], bytes: &mut u64) -> Result<String> {
-    let out =
-        process::run("git", args, cwd).with_context(|| format!("spawn git {}", args.join(" ")))?;
+    let out = process::run("git", args, cwd, GIT_TIMEOUT)
+        .with_context(|| format!("spawn git {}", args.join(" ")))?;
     *bytes += out.baseline;
+    if out.timed_out {
+        return Err(anyhow!("git {} timed out after {}s", args.join(" "), GIT_TIMEOUT.as_secs()));
+    }
     if out.status != Some(0) {
         let detail = if !out.stderr.is_empty() { &out.stderr } else { &out.stdout };
         return Err(anyhow!("git {} failed: {}", args.join(" "), detail));

@@ -37,6 +37,11 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Fixed
 
+- `relaywash__Build`, `relaywash__TestRun`, `relaywash__GitState`, and
+  `relaywash__GhPR` subprocesses are now killed after a per-tool timeout (15m
+  builds/tests, 60s git, 120s gh) instead of hanging the single-threaded MCP
+  server; Build/TestRun timeouts return the partial output captured before the
+  kill, git/gh timeouts surface a clear error.
 - `relaywash__TestRun`: `getFailureLog` now reads the most recent *test* log instead
   of whichever log sorted last by filename — a `build`/other-tool log (or, lexically,
   any later-prefixed log) could previously shadow the test log and make the lookup miss.
