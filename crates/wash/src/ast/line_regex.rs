@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use crate::language::Language;
 
-use super::{LineMapEntry, Signatures};
+use super::{LineMapEntry, Signatures, leading_ws};
 
 pub fn extract(text: &str, language: Language) -> Signatures {
     let lines: Vec<&str> = text.split('\n').collect();
@@ -132,8 +132,4 @@ fn strip_inline_comments(s: &str) -> String {
     let no_line = if let Some(i) = s.find("//") { &s[..i] } else { s };
     let block_re = BLOCK_RE.get_or_init(|| Regex::new(r"/\*.*?\*/").unwrap());
     block_re.replace_all(no_line, "").into_owned()
-}
-
-fn leading_ws(s: &str) -> usize {
-    s.chars().take_while(|c| c.is_whitespace() && *c != '\n').count()
 }
