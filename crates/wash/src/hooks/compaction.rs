@@ -131,7 +131,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
     write_continue(out)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct ToolSurvival {
     #[serde(rename = "callsBefore")]
     calls_before: u64,
@@ -187,12 +187,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
                 .get(&block.tool_use_id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
-            let entry = pre_counts.entry(tool).or_insert(ToolSurvival {
-                calls_before: 0,
-                calls_after: 0,
-                estimated_tokens_before: 0,
-                estimated_tokens_after: 0,
-            });
+            let entry = pre_counts.entry(tool).or_default();
             entry.calls_before += 1;
             entry.estimated_tokens_before += estimate_tokens_usize(block.bytes);
         }
@@ -212,12 +207,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
             synthetic_summaries += 1;
             let entry = post_counts
                 .entry(SYNTHETIC_SUMMARY_TOOL.to_string())
-                .or_insert(ToolSurvival {
-                    calls_before: 0,
-                    calls_after: 0,
-                    estimated_tokens_before: 0,
-                    estimated_tokens_after: 0,
-                });
+                .or_default();
             entry.calls_after += 1;
             entry.estimated_tokens_after += estimate_tokens_usize(message_bytes(row));
             continue;
@@ -227,12 +217,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
                 .get(&block.tool_use_id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
-            let entry = post_counts.entry(tool).or_insert(ToolSurvival {
-                calls_before: 0,
-                calls_after: 0,
-                estimated_tokens_before: 0,
-                estimated_tokens_after: 0,
-            });
+            let entry = post_counts.entry(tool).or_default();
             entry.calls_after += 1;
             entry.estimated_tokens_after += estimate_tokens_usize(block.bytes);
         }
@@ -244,12 +229,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
         merged.insert(tool, pre_entry);
     }
     for (tool, post_entry) in post_counts {
-        let m = merged.entry(tool).or_insert(ToolSurvival {
-            calls_before: 0,
-            calls_after: 0,
-            estimated_tokens_before: 0,
-            estimated_tokens_after: 0,
-        });
+        let m = merged.entry(tool).or_default();
         m.calls_after += post_entry.calls_after;
         m.estimated_tokens_after += post_entry.estimated_tokens_after;
     }
