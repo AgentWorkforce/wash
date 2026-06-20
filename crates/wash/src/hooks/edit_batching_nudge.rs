@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{sanitize_session_id, write_continue, write_json};
 
@@ -26,7 +26,7 @@ struct Entry {
 }
 
 pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
-    run_in(&nudge_dir_default(), payload, out)
+    run_in(&crate::profile::ledger_home().join("edit-nudge"), payload, out)
 }
 
 fn run_in(dir: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
@@ -73,17 +73,6 @@ fn run_in(dir: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         return Ok(());
     }
     write_continue(out)
-}
-
-fn nudge_dir_default() -> PathBuf {
-    let home = if let Ok(s) = std::env::var("RELAYBURN_HOME") {
-        PathBuf::from(s)
-    } else if let Some(h) = std::env::var_os("HOME") {
-        PathBuf::from(h).join(".relayburn")
-    } else {
-        PathBuf::from(".relayburn")
-    };
-    home.join("edit-nudge")
 }
 
 #[cfg(test)]
