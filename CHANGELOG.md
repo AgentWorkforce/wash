@@ -24,6 +24,9 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Changed
 
+- `relaywash__GitState` and `relaywash__GhPR` now report `baselineBytes` (the
+  sum of every git/gh subprocess call an op makes), so their savings finally
+  show up in the ledger instead of reading as zero.
 - `relaywash__Build` savings baseline no longer counts a synthetic newline (the
   `\n` stitched between stdout and stderr is a relaywash formatting detail, not
   vanilla output the agent would have paid for). The four process-backed tools
