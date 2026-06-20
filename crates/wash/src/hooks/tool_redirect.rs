@@ -62,9 +62,7 @@ fn patterns() -> &'static [Pattern] {
 }
 
 pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
-    let cmd = payload
-        .get("tool_input")
-        .or_else(|| payload.get("toolInput"))
+    let cmd = super::payload_field(payload, "tool_input", "toolInput")
         .and_then(|v| v.get("command"))
         .and_then(|v| v.as_str())
         .unwrap_or("")

@@ -94,15 +94,11 @@ pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
 }
 
 fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
-    let raw_session = payload
-        .get("session_id")
-        .or_else(|| payload.get("sessionId"))
+    let raw_session = super::payload_field(payload, "session_id", "sessionId")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let session_id = sanitize_session_id(raw_session);
-    let tool_name_full = payload
-        .get("tool_name")
-        .or_else(|| payload.get("toolName"))
+    let tool_name_full = super::payload_field(payload, "tool_name", "toolName")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     // Strip the `mcp__relaywash__` prefix if present so the log uses bare tool names.
@@ -114,9 +110,7 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         return write_continue(out);
     }
 
-    let raw_args = payload
-        .get("tool_input")
-        .or_else(|| payload.get("toolInput"))
+    let raw_args = super::payload_field(payload, "tool_input", "toolInput")
         .cloned()
         .unwrap_or(Value::Null);
     let safe_args = if raw_args.is_object() {
@@ -125,9 +119,7 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
         Value::Object(serde_json::Map::new())
     };
 
-    let response = payload
-        .get("tool_response")
-        .or_else(|| payload.get("toolResponse"))
+    let response = super::payload_field(payload, "tool_response", "toolResponse")
         .cloned()
         .unwrap_or(Value::Null);
     let result_bytes = serde_json::to_string(&response)

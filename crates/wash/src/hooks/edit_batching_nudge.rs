@@ -30,15 +30,11 @@ pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
 }
 
 fn run_in(dir: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
-    let raw_session = payload
-        .get("session_id")
-        .or_else(|| payload.get("sessionId"))
+    let raw_session = super::payload_field(payload, "session_id", "sessionId")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     let session_id = sanitize_session_id(raw_session);
-    let edit_count: u32 = payload
-        .get("tool_input")
-        .or_else(|| payload.get("toolInput"))
+    let edit_count: u32 = super::payload_field(payload, "tool_input", "toolInput")
         .and_then(|v| v.get("edits"))
         .and_then(|v| v.as_array())
         .map(|a| a.len() as u32)

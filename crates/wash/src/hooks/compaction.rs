@@ -363,18 +363,14 @@ fn append_session_event(home: &Path, session_id: &str, event: &CompactionEvent) 
 }
 
 fn extract_session_id(payload: &Value) -> String {
-    let raw = payload
-        .get("session_id")
-        .or_else(|| payload.get("sessionId"))
+    let raw = super::payload_field(payload, "session_id", "sessionId")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     sanitize_session_id(raw)
 }
 
 fn extract_transcript_path(payload: &Value) -> Option<PathBuf> {
-    payload
-        .get("transcript_path")
-        .or_else(|| payload.get("transcriptPath"))
+    super::payload_field(payload, "transcript_path", "transcriptPath")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
 }

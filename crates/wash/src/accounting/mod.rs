@@ -82,9 +82,7 @@ pub fn ingest_transcript(payload: &Value) -> Result<usize> {
 
 /// Test-friendly variant — `home` is the equivalent of `${RELAYBURN_HOME}`.
 pub fn ingest_with(home: &Path, payload: &Value) -> Result<usize> {
-    let transcript_path = match payload
-        .get("transcript_path")
-        .or_else(|| payload.get("transcriptPath"))
+    let transcript_path = match crate::hooks::payload_field(payload, "transcript_path", "transcriptPath")
         .and_then(|v| v.as_str())
     {
         Some(p) if !p.is_empty() => PathBuf::from(p),
@@ -94,9 +92,7 @@ pub fn ingest_with(home: &Path, payload: &Value) -> Result<usize> {
         return Ok(0);
     }
 
-    let raw_session = payload
-        .get("session_id")
-        .or_else(|| payload.get("sessionId"))
+    let raw_session = crate::hooks::payload_field(payload, "session_id", "sessionId")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let session_id = sanitize_session_id(raw_session);

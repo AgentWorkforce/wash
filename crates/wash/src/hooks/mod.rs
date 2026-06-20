@@ -50,6 +50,18 @@ pub(crate) fn write_json(out: &mut impl Write, value: &serde_json::Value) -> Res
     Ok(())
 }
 
+/// Look up a hook-payload field by its `snake_case` name, falling back to the
+/// `camelCase` spelling Claude Code sometimes emits. Returns the raw `Value` so each
+/// caller keeps its own typing, default, and post-processing — centralizing only the
+/// two-spelling fallback so the spellings can't drift apart as fields are added.
+pub(crate) fn payload_field<'a>(
+    payload: &'a serde_json::Value,
+    snake: &str,
+    camel: &str,
+) -> Option<&'a serde_json::Value> {
+    payload.get(snake).or_else(|| payload.get(camel))
+}
+
 /// Map a session id to a filename-safe slug. Hooks compose paths like
 /// `${RELAYBURN_HOME}/observe/<session>.json`; without sanitization a crafted id like
 /// `../../etc/passwd` would let the harness write outside the intended directory.
