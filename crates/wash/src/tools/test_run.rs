@@ -64,11 +64,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         return ok_value(fetch_failure_slice(name)?);
     }
 
-    let cwd: PathBuf = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let cwd: PathBuf = super::cwd_arg(args);
     let pattern = args.get("pattern").and_then(|v| v.as_str()).map(String::from);
     let paths: Vec<String> = args
         .get("paths")

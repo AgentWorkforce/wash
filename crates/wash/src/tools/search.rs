@@ -40,11 +40,7 @@ pub fn tool() -> Tool {
 }
 
 fn run(args: &Value) -> Result<ToolResult> {
-    let cwd: PathBuf = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let cwd: PathBuf = super::cwd_arg(args);
 
     // Profile-aware defaults: when the agent omits an arg, fall back to the active
     // per-repo profile if it has a value, else the static default. The tool *schema*

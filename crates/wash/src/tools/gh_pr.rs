@@ -55,11 +55,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("missing op"))?
         .to_string();
-    let cwd: PathBuf = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let cwd: PathBuf = super::cwd_arg(args);
 
     let replaces = match op.as_str() {
         "view" => "Bash:gh-pr-view",

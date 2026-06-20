@@ -47,11 +47,7 @@ struct BuildError {
 }
 
 fn run(args: &Value) -> Result<ToolResult> {
-    let cwd: PathBuf = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let cwd: PathBuf = super::cwd_arg(args);
     let target = args.get("target").and_then(|v| v.as_str()).map(String::from);
     let tail_lines = args
         .get("errorTailLines")

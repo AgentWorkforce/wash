@@ -105,15 +105,7 @@ impl Args {
             .map(|n| n as usize)
             .unwrap_or(DEFAULT_MAX_LINES);
         let with_body = v.get("withBody").and_then(|x| x.as_bool()).unwrap_or(false);
-        let cwd = v
-            .get("cwd")
-            .and_then(|x| x.as_str())
-            .map(String::from)
-            .unwrap_or_else(|| {
-                std::env::current_dir()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| ".".into())
-            });
+        let cwd = super::cwd_arg(v).to_string_lossy().into_owned();
         Ok(Self {
             op,
             paths,

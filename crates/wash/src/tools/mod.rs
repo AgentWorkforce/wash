@@ -7,11 +7,23 @@ pub mod read;
 pub mod search;
 pub mod test_run;
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use serde_json::Value;
 
 use crate::mcp::{Tool, ToolResult};
 use crate::meta::Meta;
+
+/// Resolve a tool's optional `cwd` argument to a directory path, falling back to the
+/// process's current directory (then `"."` if even that is unavailable). Centralized so
+/// every tool that runs against a working directory shares one fallback behavior.
+pub(crate) fn cwd_arg(args: &Value) -> PathBuf {
+    args.get("cwd")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()))
+}
 
 /// Wrap a tool's JSON payload in a `ToolResult` carrying the standard `_meta`
 /// annotation. Every process-backed tool funnels through here so the `replaces`
