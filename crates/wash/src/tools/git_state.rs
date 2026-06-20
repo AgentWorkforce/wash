@@ -6,10 +6,9 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::process::{Command, Stdio};
 
-use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
+use crate::mcp::Tool;
+use crate::process;
 
 const DESCRIPTION: &str = "Structured git status/diff/log/show. Returns file lists + summary stats; per-file diffs are truncated. Use this instead of raw `git status`/`git diff`/`git log`/`git show` Bash calls.";
 
@@ -39,8 +38,12 @@ pub fn tool() -> Tool {
             let parsed = Args::parse(args)?;
             let op = parsed.op;
             let value = run(parsed)?;
-            Ok(ToolResult::new("relaywash__GitState", value)
-                .with_meta(Meta::new([format!("Bash:git-{}", op_label(op))], 1)))
+            super::ok_with_meta(
+                "relaywash__GitState",
+                &format!("Bash:git-{}", op_label(op)),
+                value,
+                None,
+            )
         }),
     }
 }
@@ -133,20 +136,13 @@ fn run(a: Args) -> Result<Value> {
 }
 
 fn git(cwd: &str, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .output()
-        .with_context(|| format!("spawn git {}", args.join(" ")))?;
-    if !out.status.success() {
-        return Err(anyhow!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(if !out.stderr.is_empty() { &out.stderr } else { &out.stdout }),
-        ));
+    let out =
+        process::run("git", args, cwd).with_context(|| format!("spawn git {}", args.join(" ")))?;
+    if out.status != Some(0) {
+        let detail = if !out.stderr.is_empty() { &out.stderr } else { &out.stdout };
+        return Err(anyhow!("git {} failed: {}", args.join(" "), detail));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(out.stdout)
 }
 
 #[derive(Serialize)]

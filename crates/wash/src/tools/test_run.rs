@@ -5,12 +5,11 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Instant;
 
 use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
+use crate::process;
 
 const DESCRIPTION: &str = "Run tests and return structured counts + failure summaries. Use `failuresOnly` (default true) to elide passing-test noise. Use `getFailureLog: <name>` to fetch the log slice for a single failure from a previous run.";
 
@@ -104,19 +103,10 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
 
     let t0 = Instant::now();
-    let out = Command::new(&cmd[0]).args(&cmd[1..]).current_dir(&cwd).output();
+    let captured = process::run(&cmd[0], &cmd[1..], &cwd);
     let duration = t0.elapsed().as_millis() as u64;
-    let (stdout, stderr, baseline) = match out {
-        Ok(o) => {
-            // Baseline is the raw byte count the agent would have paid for, computed
-            // from the original stdout/stderr so lossy UTF-8 decoding can't skew it.
-            let baseline = (o.stdout.len() + o.stderr.len()) as u64;
-            (
-                String::from_utf8_lossy(&o.stdout).into_owned(),
-                String::from_utf8_lossy(&o.stderr).into_owned(),
-                baseline,
-            )
-        }
+    let captured = match captured {
+        Ok(c) => c,
         Err(e) => {
             return ok_value(json!({
                 "runner": runner,
@@ -130,6 +120,7 @@ fn run(args: &Value) -> Result<ToolResult> {
             }));
         }
     };
+    let (stdout, stderr, baseline) = (captured.stdout, captured.stderr, captured.baseline);
     let raw = format!("{stdout}{stderr}");
     let log_path = crate::tools::build::write_log("testrun", &raw).ok();
 
@@ -152,13 +143,11 @@ fn run(args: &Value) -> Result<ToolResult> {
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__TestRun", value)
-        .with_meta(Meta::new(["Bash:test".to_string()], 1)))
+    super::ok_with_meta("relaywash__TestRun", "Bash:test", value, None)
 }
 
 fn ok_value_with_baseline(value: Value, baseline: u64) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__TestRun", value)
-        .with_meta(Meta::new(["Bash:test".to_string()], 1).with_baseline(baseline)))
+    super::ok_with_meta("relaywash__TestRun", "Bash:test", value, Some(baseline))
 }
 
 fn detect_runner(cwd: &Path) -> String {

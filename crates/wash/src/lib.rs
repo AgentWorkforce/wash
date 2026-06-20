@@ -7,6 +7,7 @@ pub mod hooks;
 pub mod language;
 pub mod mcp;
 pub mod meta;
+pub mod process;
 pub mod profile;
 pub mod savings;
 pub mod search;

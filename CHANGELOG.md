@@ -24,6 +24,10 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Changed
 
+- `relaywash__Build` savings baseline no longer counts a synthetic newline (the
+  `\n` stitched between stdout and stderr is a relaywash formatting detail, not
+  vanilla output the agent would have paid for). The four process-backed tools
+  now share one `baselineBytes` definition, so their savings can't drift apart.
 - `wash` profile cache now reloads mid-session when the profile file changes,
   so adaptive defaults pick up new writes without a CLI restart. A broken
   per-repo profile falls through to the global profile instead of masking it.

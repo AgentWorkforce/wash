@@ -8,9 +8,11 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// read it from the text content block. `response_bytes` is filled in by the MCP formatter
 /// so individual tool authors do not have to re-derive payload size.
 ///
-/// `baseline_bytes` is an optional, tool-supplied estimate of the vanilla output size
-/// (e.g. full file bytes for Read, raw log bytes for Build/TestRun). The post-tool
-/// observe hook reads it to emit a `tool_metrics` event with a savings delta.
+/// `baseline_bytes` is an optional, tool-supplied estimate of the vanilla output size.
+/// Read prices it as full file bytes; the subprocess tools (Build/TestRun/GitState/GhPR)
+/// price it via `crate::process::subprocess_baseline` (raw stdout+stderr bytes), which is
+/// the single definition for those tools. The post-tool observe hook reads it to emit a
+/// `tool_metrics` event with a savings delta.
 #[derive(Debug, Clone, Serialize)]
 pub struct Meta {
     pub replaces: Vec<String>,

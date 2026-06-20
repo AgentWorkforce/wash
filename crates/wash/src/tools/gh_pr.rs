@@ -4,10 +4,9 @@ use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
+use crate::process;
 
 const DESCRIPTION: &str = "Structured PR access (replaces gh pr view/list/diff and gh api repos/.../pulls). Returns a small subset of fields by default; use `fields` to expand. Bodies and diff hunks are truncated.";
 
@@ -77,21 +76,16 @@ fn run(args: &Value) -> Result<ToolResult> {
         "comments" => comments(&cwd, args)?,
         _ => unreachable!(),
     };
-    Ok(ToolResult::new("relaywash__GhPR", value)
-        .with_meta(Meta::new([replaces.to_string()], 1)))
+    super::ok_with_meta("relaywash__GhPR", replaces, value, None)
 }
 
 fn gh(cwd: &std::path::Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("gh").args(args).current_dir(cwd).output()?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(if !out.stderr.is_empty() {
-            &out.stderr
-        } else {
-            &out.stdout
-        });
+    let out = process::run("gh", args, cwd)?;
+    if out.status != Some(0) {
+        let err = if !out.stderr.is_empty() { &out.stderr } else { &out.stdout };
         return Err(anyhow!("gh {} failed: {}", args.join(" "), err.trim()));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(out.stdout)
 }
 
 fn view(cwd: &std::path::Path, args: &Value) -> Result<Value> {

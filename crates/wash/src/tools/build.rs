@@ -5,12 +5,11 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
+use crate::process;
 
 const DESCRIPTION: &str = "Run the project build and return a tiny structured response. Successful builds return one line; failing tsc/cargo/go builds return parsed `errors[]`; other builders return an `errorTail`.";
 
@@ -77,21 +76,10 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
 
     let t0 = Instant::now();
-    let out = Command::new(&cmd[0]).args(&cmd[1..]).current_dir(&cwd).output();
+    let captured = process::run(&cmd[0], &cmd[1..], &cwd);
     let duration = t0.elapsed().as_millis() as u64;
-    let (stdout, stderr, status_code, baseline) = match out {
-        Ok(o) => {
-            // Baseline is the raw byte count the agent would have paid for. Compute it
-            // from the original stdout/stderr (plus the "\n" we stitch in below) so
-            // that lossy UTF-8 decoding can't drift the savings estimate.
-            let baseline = (o.stdout.len() + 1 + o.stderr.len()) as u64;
-            (
-                String::from_utf8_lossy(&o.stdout).into_owned(),
-                String::from_utf8_lossy(&o.stderr).into_owned(),
-                o.status.code(),
-                baseline,
-            )
-        }
+    let captured = match captured {
+        Ok(c) => c,
         Err(e) => {
             return ok_value(json!({
                 "builder": builder,
@@ -102,6 +90,8 @@ fn run(args: &Value) -> Result<ToolResult> {
             }));
         }
     };
+    let (stdout, stderr, status_code, baseline) =
+        (captured.stdout, captured.stderr, captured.status, captured.baseline);
     let raw = format!("{stdout}\n{stderr}");
     let log_path = write_log("build", &raw).ok();
 
@@ -136,13 +126,11 @@ fn run(args: &Value) -> Result<ToolResult> {
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__Build", value)
-        .with_meta(Meta::new(["Bash:build".to_string()], 1)))
+    super::ok_with_meta("relaywash__Build", "Bash:build", value, None)
 }
 
 fn ok_value_with_baseline(value: Value, baseline: u64) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__Build", value)
-        .with_meta(Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline)))
+    super::ok_with_meta("relaywash__Build", "Bash:build", value, Some(baseline))
 }
 
 fn detect_builder(cwd: &Path) -> String {
