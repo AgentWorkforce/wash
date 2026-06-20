@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use super::{sanitize_session_id, write_continue};
 use crate::profile::ledger_home;
 use crate::tokens::estimate_tokens_usize;
+use crate::transcript;
 
 const SNAPSHOT_SUBDIR: &str = "compaction";
 const SESSIONS_SUBDIR: &str = "sessions";
@@ -84,7 +85,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
         .join(format!("{session_id}-pre.jsonl"));
     let transcript_path = extract_transcript_path(payload);
 
-    let pre_entries = match read_jsonl(&snapshot_path) {
+    let pre_entries = match transcript::read_file(&snapshot_path) {
         Ok(rows) => rows,
         Err(e) => {
             // Missing snapshot is expected the first time around (e.g. if the
@@ -99,7 +100,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
     };
 
     let post_entries = match transcript_path.as_deref() {
-        Some(p) => match read_jsonl(p) {
+        Some(p) => match transcript::read_file(p) {
             Ok(rows) => rows,
             Err(e) => {
                 eprintln!(
@@ -359,29 +360,6 @@ fn append_session_event(home: &Path, session_id: &str, event: &CompactionEvent) 
     let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(f, "{line}")?;
     Ok(())
-}
-
-fn read_jsonl(path: &Path) -> std::io::Result<Vec<Value>> {
-    let raw = fs::read_to_string(path)?;
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<Value>(trimmed) {
-            Ok(v) => out.push(v),
-            Err(e) => {
-                // Single malformed line shouldn't abort the whole parse — log
-                // and continue so the rest of the transcript still attributes.
-                eprintln!(
-                    "relaywash: compaction parse skipped malformed line in {}: {e}",
-                    path.display()
-                );
-            }
-        }
-    }
-    Ok(out)
 }
 
 fn extract_session_id(payload: &Value) -> String {

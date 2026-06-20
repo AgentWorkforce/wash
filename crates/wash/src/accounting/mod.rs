@@ -178,23 +178,13 @@ pub fn ingest_with(home: &Path, payload: &Value) -> Result<usize> {
 /// parsed as JSON are skipped silently — the transcript is a streaming format
 /// that may have partial trailing lines.
 pub fn parse_turns(transcript: &str, session_id: &str, project_key: &str) -> Vec<TurnRecord> {
-    let mut out = Vec::new();
-    for line in transcript.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(entry) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if entry.get("type").and_then(|v| v.as_str()) != Some("assistant") {
-            continue;
-        }
-        let Some(rec) = turn_from_entry(&entry, session_id, project_key) else {
-            continue;
-        };
-        out.push(rec);
-    }
-    out
+    // Malformed lines are skipped silently — a streaming transcript may end mid-line.
+    // (`crate::transcript` is fully qualified because the `transcript` param shadows it.)
+    crate::transcript::parse_lines(transcript, |_| {})
+        .iter()
+        .filter(|entry| entry.get("type").and_then(|v| v.as_str()) == Some("assistant"))
+        .filter_map(|entry| turn_from_entry(entry, session_id, project_key))
+        .collect()
 }
 
 fn turn_from_entry(entry: &Value, session_id: &str, project_key: &str) -> Option<TurnRecord> {
@@ -425,11 +415,7 @@ mod tests {
     }
 
     fn read_jsonl(path: &Path) -> Vec<Value> {
-        let raw = fs::read_to_string(path).unwrap_or_default();
-        raw.lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect()
+        crate::transcript::read_file(path).unwrap_or_default()
     }
 
     #[test]
