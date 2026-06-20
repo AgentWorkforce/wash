@@ -177,11 +177,7 @@ fn diff(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Value> {
         .get("number")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow!("GhPR diff requires `number`"))?;
-    let max_lines = args
-        .get("maxDiffLines")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_MAX_DIFF_LINES);
+    let max_lines = super::usize_arg(args, "maxDiffLines", DEFAULT_MAX_DIFF_LINES);
     let n = number.to_string();
     let mut cmd: Vec<&str> = vec!["pr", "diff", &n];
     let repo = args.get("repo").and_then(|v| v.as_str()).map(String::from);
@@ -291,11 +287,7 @@ fn comments(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Valu
         .get("number")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow!("GhPR comments requires `number`"))?;
-    let max = args
-        .get("maxComments")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_MAX_COMMENTS);
+    let max = super::usize_arg(args, "maxComments", DEFAULT_MAX_COMMENTS);
     let repo = args.get("repo").and_then(|v| v.as_str()).map(String::from);
     // `gh api` takes a literal URL — unlike `gh pr <op>`, it doesn't substitute
     // `{owner}/{repo}` from cwd. Resolve it ourselves so omitting `repo` behaves the

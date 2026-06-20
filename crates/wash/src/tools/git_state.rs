@@ -94,16 +94,8 @@ impl Args {
             .unwrap_or_default();
         let revision = v.get("revision").and_then(|x| x.as_str()).map(String::from);
         let base = v.get("base").and_then(|x| x.as_str()).map(String::from);
-        let max_files = v
-            .get("maxFiles")
-            .and_then(|x| x.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_MAX_FILES);
-        let max_lines = v
-            .get("maxLines")
-            .and_then(|x| x.as_u64())
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_MAX_LINES);
+        let max_files = super::usize_arg(v, "maxFiles", DEFAULT_MAX_FILES);
+        let max_lines = super::usize_arg(v, "maxLines", DEFAULT_MAX_LINES);
         let with_body = v.get("withBody").and_then(|x| x.as_bool()).unwrap_or(false);
         let cwd = super::cwd_arg(v).to_string_lossy().into_owned();
         Ok(Self {

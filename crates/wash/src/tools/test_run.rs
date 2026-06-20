@@ -72,11 +72,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
         .unwrap_or_default();
     let failures_only = args.get("failuresOnly").and_then(|v| v.as_bool()).unwrap_or(true);
-    let max_failures = args
-        .get("maxFailures")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_MAX_FAILURES);
+    let max_failures = super::usize_arg(args, "maxFailures", DEFAULT_MAX_FAILURES);
 
     let requested = args.get("runner").and_then(|v| v.as_str()).unwrap_or("auto");
     let runner = if requested == "auto" {

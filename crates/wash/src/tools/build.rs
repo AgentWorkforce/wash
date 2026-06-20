@@ -49,11 +49,7 @@ struct BuildError {
 fn run(args: &Value) -> Result<ToolResult> {
     let cwd: PathBuf = super::cwd_arg(args);
     let target = args.get("target").and_then(|v| v.as_str()).map(String::from);
-    let tail_lines = args
-        .get("errorTailLines")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_TAIL_LINES);
+    let tail_lines = super::usize_arg(args, "errorTailLines", DEFAULT_TAIL_LINES);
     let requested = args.get("builder").and_then(|v| v.as_str()).unwrap_or("auto");
     let builder = if requested == "auto" {
         detect_builder(&cwd)

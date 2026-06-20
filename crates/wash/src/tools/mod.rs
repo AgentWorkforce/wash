@@ -25,6 +25,16 @@ pub(crate) fn cwd_arg(args: &Value) -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()))
 }
 
+/// Read an optional unsigned-integer argument as `usize`, falling back to `default`
+/// when the key is absent or not a non-negative integer. (Tools whose default comes
+/// from a learned profile keep their own chain — this is only for fixed defaults.)
+pub(crate) fn usize_arg(args: &Value, key: &str, default: usize) -> usize {
+    args.get(key)
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(default)
+}
+
 /// Wrap a tool's JSON payload in a `ToolResult` carrying the standard `_meta`
 /// annotation. Every process-backed tool funnels through here so the `replaces`
 /// label, `collapsedCalls`, and optional `baselineBytes` are constructed one way
