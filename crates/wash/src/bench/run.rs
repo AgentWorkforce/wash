@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::bench::report::{
     CallRecord, ExpectationOutcome, RunReport, SuiteReport, TaskReport,
 };
-use crate::mcp::{Tool, ToolContext, format_tool_result};
+use crate::mcp::{Tool, ToolContext, error_tool_result, format_tool_result};
 use crate::meta::SCHEMA_VERSION;
 use crate::tokens::estimate_tokens;
 use crate::tools;
@@ -274,14 +274,7 @@ pub fn run_task(
                     .unwrap_or(Value::Null);
                 (formatted, structured, false)
             }
-            Err(e) => (
-                json!({
-                    "content": [{"type": "text", "text": e.to_string()}],
-                    "isError": true,
-                }),
-                Value::Null,
-                true,
-            ),
+            Err(e) => (error_tool_result(&e.to_string()), Value::Null, true),
         };
 
         let response_bytes = extract_response_bytes(&formatted);

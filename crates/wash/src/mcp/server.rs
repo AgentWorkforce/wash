@@ -180,10 +180,7 @@ impl McpServer {
                 // rather than seeing a generic "tool failed" with no detail.
                 match (tool.handler)(&args, &ctx) {
                     Ok(out) => Ok(Some(format_tool_result(&out))),
-                    Err(e) => Ok(Some(json!({
-                        "content": [{"type": "text", "text": e.to_string()}],
-                        "isError": true,
-                    }))),
+                    Err(e) => Ok(Some(error_tool_result(&e.to_string()))),
                 }
             }
             "ping" => Ok(Some(json!({}))),
@@ -194,6 +191,17 @@ impl McpServer {
             _ => Err(anyhow!("Method not implemented: {method}")),
         }
     }
+}
+
+/// The wire shape for a *tool execution* failure: a normal `result` carrying the error
+/// text with `isError: true` (see the `tools/call` handler for why this is not a JSON-RPC
+/// error). Defined once so the bench harness, which replays tool calls outside the server,
+/// cannot drift from what the live server actually emits.
+pub fn error_tool_result(message: &str) -> Value {
+    json!({
+        "content": [{"type": "text", "text": message}],
+        "isError": true,
+    })
 }
 
 pub fn format_tool_result(r: &ToolResult) -> Value {
