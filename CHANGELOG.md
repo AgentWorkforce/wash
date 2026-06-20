@@ -30,6 +30,10 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Fixed
 
+- Reproducible builds: `Cargo.lock` is now committed (it was ignored as if it
+  were build output), pinning `relayburn-sdk` at a version with the synchronous
+  `ingest` the Stop hook calls. The now-unused direct `tokio` runtime dependency
+  is dropped.
 - `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
   when the `repo` arg is omitted, replacing the broken literal-placeholder
   fallback that produced 404s.
