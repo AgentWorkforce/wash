@@ -161,28 +161,7 @@ impl McpServer {
                     .collect();
                 Ok(Some(json!({"tools": arr})))
             }
-            "tools/call" => {
-                let name = params
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("tools/call: missing name"))?;
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                let tool = self
-                    .tools
-                    .iter()
-                    .find(|t| t.name == name)
-                    .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
-                let ctx = ToolContext { session_id: self.session_id.clone() };
-                // Per the MCP spec, JSON-RPC `error` is reserved for protocol/transport
-                // failures (unknown method, malformed request, missing tool, etc.). Tool
-                // *execution* failures must come back as a normal `result` with
-                // `isError: true` so the model can read the failure text and react,
-                // rather than seeing a generic "tool failed" with no detail.
-                match (tool.handler)(&args, &ctx) {
-                    Ok(out) => Ok(Some(format_tool_result(&out))),
-                    Err(e) => Ok(Some(error_tool_result(&e.to_string()))),
-                }
-            }
+            "tools/call" => self.call_tool(params).map(Some),
             "ping" => Ok(Some(json!({}))),
             "shutdown" | "exit" => {
                 self.shutdown.set(true);
@@ -190,6 +169,33 @@ impl McpServer {
             }
             _ => Err(anyhow!("Method not implemented: {method}")),
         }
+    }
+
+    /// Execute a `tools/call` and return its JSON-RPC `result` value.
+    ///
+    /// The MCP spec splits two kinds of failure, and this method is where that policy
+    /// lives: a *protocol* failure (missing `name`, unknown tool) returns `Err`, which
+    /// the caller turns into a JSON-RPC `error`; a tool *execution* failure is NOT an
+    /// `Err` — it comes back as a normal result with `isError: true` so the model can
+    /// read the failure text and react, rather than seeing a generic "tool failed".
+    /// Kept separate from `dispatch` so this spec-sensitive contract is unit-testable
+    /// without driving the full stdio protocol.
+    fn call_tool(&self, params: &Value) -> Result<Value> {
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("tools/call: missing name"))?;
+        let args = params.get("arguments").cloned().unwrap_or(json!({}));
+        let tool = self
+            .tools
+            .iter()
+            .find(|t| t.name == name)
+            .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
+        let ctx = ToolContext { session_id: self.session_id.clone() };
+        Ok(match (tool.handler)(&args, &ctx) {
+            Ok(out) => format_tool_result(&out),
+            Err(e) => error_tool_result(&e.to_string()),
+        })
     }
 }
 
@@ -345,6 +351,53 @@ mod tests {
         let structured = &out["structuredContent"];
         assert_eq!(structured["data"], json!(["a", "b"]));
         assert!(structured["_meta"].is_object());
+    }
+
+    fn server_with_tool(name: &str, handler: ToolHandler) -> McpServer {
+        let mut s = McpServer::new("test", "0");
+        s.register(Tool {
+            name: name.into(),
+            description: "t".into(),
+            input_schema: json!({}),
+            handler,
+        });
+        s
+    }
+
+    #[test]
+    fn call_tool_execution_error_becomes_is_error_result() {
+        // A handler returning Err is a tool *execution* failure: it must come back as a
+        // normal result with isError:true, NOT as a JSON-RPC error (Err from call_tool).
+        let s = server_with_tool(
+            "relaywash__Boom",
+            Box::new(|_, _| Err(anyhow!("kaboom detail"))),
+        );
+        let out = s.call_tool(&json!({"name": "relaywash__Boom"})).expect("not a protocol error");
+        assert_eq!(out["isError"], json!(true));
+        assert_eq!(out["content"][0]["text"], json!("kaboom detail"));
+    }
+
+    #[test]
+    fn call_tool_missing_name_is_protocol_error() {
+        let s = server_with_tool("relaywash__Ok", Box::new(|_, _| Ok(ToolResult::new("x", json!({})))));
+        assert!(s.call_tool(&json!({})).is_err());
+    }
+
+    #[test]
+    fn call_tool_unknown_tool_is_protocol_error() {
+        let s = server_with_tool("relaywash__Ok", Box::new(|_, _| Ok(ToolResult::new("x", json!({})))));
+        assert!(s.call_tool(&json!({"name": "relaywash__Nope"})).is_err());
+    }
+
+    #[test]
+    fn call_tool_success_returns_formatted_result() {
+        let s = server_with_tool(
+            "relaywash__Ok",
+            Box::new(|_, _| Ok(ToolResult::new("relaywash__Ok", json!({"v": 1})))),
+        );
+        let out = s.call_tool(&json!({"name": "relaywash__Ok"})).unwrap();
+        assert_eq!(out["structuredContent"]["v"], json!(1));
+        assert!(out.get("isError").is_none());
     }
 
     #[test]
