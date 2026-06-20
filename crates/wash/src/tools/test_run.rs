@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use super::logs;
 use crate::mcp::{Tool, ToolResult};
 use crate::process;
 
@@ -122,7 +123,7 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
     let (stdout, stderr, baseline) = (captured.stdout, captured.stderr, captured.baseline);
     let raw = format!("{stdout}{stderr}");
-    let log_path = crate::tools::build::write_log("testrun", &raw).ok();
+    let log_path = logs::write("testrun", &raw).ok();
 
     let parsed = parse_runner_output(&runner, &raw);
     let failures: Vec<Failure> = if failures_only {
@@ -423,30 +424,23 @@ fn parse_jest(raw: &str) -> ParseOut {
 }
 
 fn fetch_failure_slice(name: &str) -> Result<Value> {
-    let dir = crate::tools::build::log_dir();
-    if !dir.exists() {
-        return Ok(json!({"found": false}));
-    }
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)?
-        .filter_map(|r| r.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| x == "log")
-                .unwrap_or(false)
-        })
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    let Some(latest) = entries.last() else {
+    let Some(latest) = logs::latest("testrun")? else {
         return Ok(json!({"found": false}));
     };
-    let body = std::fs::read_to_string(latest.path())?;
+    let body = std::fs::read_to_string(latest)?;
     let Some(idx) = body.find(name) else {
         return Ok(json!({"found": false}));
     };
-    let start = idx.saturating_sub(500);
-    let end = (idx + 2000).min(body.len());
+    // Widen the byte window to char boundaries — a multibyte char straddling the ±window
+    // edge would otherwise panic the slice.
+    let mut start = idx.saturating_sub(500);
+    while start > 0 && !body.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = (idx + 2000).min(body.len());
+    while end < body.len() && !body.is_char_boundary(end) {
+        end += 1;
+    }
     Ok(json!({
         "found": true,
         "slice": &body[start..end],

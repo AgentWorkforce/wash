@@ -6,8 +6,9 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
+use super::logs;
 use crate::mcp::{Tool, ToolResult};
 use crate::process;
 
@@ -93,7 +94,7 @@ fn run(args: &Value) -> Result<ToolResult> {
     let (stdout, stderr, status_code, baseline) =
         (captured.stdout, captured.stderr, captured.status, captured.baseline);
     let raw = format!("{stdout}\n{stderr}");
-    let log_path = write_log("build", &raw).ok();
+    let log_path = logs::write("build", &raw).ok();
 
     let success = status_code == Some(0);
     if success {
@@ -248,22 +249,6 @@ fn tail_lines_of(raw: &str, n: usize) -> String {
     let lines: Vec<&str> = raw.split('\n').collect();
     let start = lines.len().saturating_sub(n);
     lines[start..].join("\n")
-}
-
-pub(crate) fn log_dir() -> PathBuf {
-    std::env::temp_dir().join("relaywash-logs")
-}
-
-pub(crate) fn write_log(prefix: &str, body: &str) -> std::io::Result<PathBuf> {
-    let dir = log_dir();
-    std::fs::create_dir_all(&dir)?;
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let path = dir.join(format!("{prefix}-{ts}.log"));
-    std::fs::write(&path, body)?;
-    Ok(path)
 }
 
 #[cfg(test)]

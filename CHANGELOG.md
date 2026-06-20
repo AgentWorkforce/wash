@@ -37,6 +37,9 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Fixed
 
+- `relaywash__TestRun`: `getFailureLog` now reads the most recent *test* log instead
+  of whichever log sorted last by filename — a `build`/other-tool log (or, lexically,
+  any later-prefixed log) could previously shadow the test log and make the lookup miss.
 - Reproducible builds: `Cargo.lock` is now committed (it was ignored as if it
   were build output), pinning `relayburn-sdk` at a version with the synchronous
   `ingest` the Stop hook calls. The now-unused direct `tokio` runtime dependency
