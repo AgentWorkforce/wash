@@ -172,7 +172,12 @@ impl HitSink {
     }
 
     fn record(&mut self, line: u32, bytes: &[u8], is_match: bool) {
-        let s = std::str::from_utf8(bytes).unwrap_or("");
+        // Decode lossily: a line with a stray non-UTF-8 byte (Latin-1 text, a binary
+        // smudge in an otherwise-text file that cleared the NUL check) renders with U+FFFD
+        // replacement chars like ripgrep, instead of collapsing to an empty line while the
+        // match still counts — which silently dropped the snippet body.
+        let decoded = String::from_utf8_lossy(bytes);
+        let s: &str = &decoded;
         let trimmed = s.strip_suffix('\n').unwrap_or(s).to_string();
         self.lines.insert(line, trimmed);
         if is_match {
@@ -281,6 +286,32 @@ mod tests {
         // Found in two locations.
         let total_matches: u32 = out.hits.iter().map(|h| h.match_count).sum();
         assert!(total_matches >= 2, "got total_matches={total_matches}");
+    }
+
+    #[test]
+    fn non_utf8_line_renders_lossily_not_blank() {
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        // Latin-1 'é' (0xe9) is invalid UTF-8 but not a NUL, so the file is treated as
+        // text. The matched line must still render its content (with U+FFFD for the bad
+        // byte), not collapse to a blank snippet body.
+        let mut bytes = b"let x = \"caf".to_vec();
+        bytes.push(0xe9);
+        bytes.extend_from_slice(b"\";\n");
+        fs::write(p.join("a.ts"), &bytes).unwrap();
+        let out = run(SearchOpts {
+            cwd: p.to_path_buf(),
+            pattern: Some(r"\blet\b".into()),
+            paths: vec!["**/*.ts".into()],
+            context_lines: 0,
+            max_file_bytes: Some(DEFAULT_MAX_FILE_BYTES),
+            max_total_bytes: None,
+        })
+        .unwrap();
+        assert!(!out.hits.is_empty(), "expected a hit on the non-UTF-8 line");
+        let snippet = &out.hits[0].snippet;
+        assert!(snippet.contains("let x = \"caf"), "body should survive: {snippet:?}");
+        assert!(snippet.contains('\u{FFFD}'), "bad byte should become U+FFFD: {snippet:?}");
     }
 
     #[test]
