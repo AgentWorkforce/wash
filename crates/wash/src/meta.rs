@@ -1,7 +1,11 @@
 use serde::Serialize;
+use serde_json::Value;
 
 /// Bump when the `_meta` shape changes in a way transcript readers must notice.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// The key under which [`Meta`] is attached to a tool result's structured object.
+pub const META_KEY: &str = "_meta";
 
 /// `_meta` annotation that every relaywash tool result carries. Burn's annotation reader
 /// (AgentWorkforce/burn#219) reads this to attribute savings; transcript-based learners
@@ -45,4 +49,25 @@ impl Meta {
         self.baseline_bytes = Some(baseline_bytes);
         self
     }
+
+    /// Read `responseBytes` from the `_meta` attached to `container` (the structured
+    /// object that directly holds `_meta`; the nesting differs by caller, so each
+    /// passes its own container). `None` if absent or non-numeric.
+    ///
+    /// These readers live here, next to the serde renames above, so the `_meta` wire
+    /// names have a single home — a reader can no longer silently drift from what the
+    /// formatter writes when [`SCHEMA_VERSION`] is bumped.
+    pub fn response_bytes_of(container: &Value) -> Option<u64> {
+        meta_field_u64(container, "responseBytes")
+    }
+
+    /// Read `baselineBytes` from the `_meta` attached to `container`. See
+    /// [`response_bytes_of`](Self::response_bytes_of).
+    pub fn baseline_bytes_of(container: &Value) -> Option<u64> {
+        meta_field_u64(container, "baselineBytes")
+    }
+}
+
+fn meta_field_u64(container: &Value, field: &str) -> Option<u64> {
+    container.get(META_KEY)?.get(field)?.as_u64()
 }

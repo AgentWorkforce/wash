@@ -323,9 +323,7 @@ pub fn run_task(
 fn extract_response_bytes(formatted: &Value) -> u64 {
     if let Some(n) = formatted
         .get("structuredContent")
-        .and_then(|v| v.get("_meta"))
-        .and_then(|v| v.get("responseBytes"))
-        .and_then(|v| v.as_u64())
+        .and_then(crate::meta::Meta::response_bytes_of)
     {
         return n;
     }
@@ -342,9 +340,7 @@ fn extract_response_bytes(formatted: &Value) -> u64 {
 fn extract_baseline_bytes(formatted: &Value) -> Option<u64> {
     formatted
         .get("structuredContent")
-        .and_then(|v| v.get("_meta"))
-        .and_then(|v| v.get("baselineBytes"))
-        .and_then(|v| v.as_u64())
+        .and_then(crate::meta::Meta::baseline_bytes_of)
 }
 
 /// Heuristic cap detection. Mirrors the actual flags the tools emit so the

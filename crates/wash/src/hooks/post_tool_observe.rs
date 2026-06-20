@@ -178,10 +178,7 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
     }
     let events_path = events_dir.join(format!("{session_id}.jsonl"));
 
-    let baseline_bytes = response
-        .get("_meta")
-        .and_then(|m| m.get("baselineBytes"))
-        .and_then(|v| v.as_u64());
+    let baseline_bytes = crate::meta::Meta::baseline_bytes_of(&response);
     let result_bytes_u64 = result_bytes as u64;
     let result_tokens = estimate_tokens(result_bytes_u64);
     let baseline_tokens = baseline_bytes.map(estimate_tokens);
