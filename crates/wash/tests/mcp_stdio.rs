@@ -340,3 +340,41 @@ fn mcp_initialize_and_tools_list() {
     drop(stdin);
     let _ = child.wait();
 }
+
+/// A corrupt frame must not kill the long-lived server: a frame whose body is not valid
+/// UTF-8 (and thus not valid JSON) is skipped, and a subsequent valid request still gets
+/// a response. Regression test for the run loop treating a bad body as fatal.
+#[test]
+fn corrupt_frame_does_not_kill_server() {
+    let bin = env!("CARGO_BIN_EXE_wash");
+    let mut child = Command::new(bin)
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn wash mcp");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    // A framed message whose 4-byte body is invalid UTF-8 (0xff.. is never valid UTF-8).
+    let mut corrupt = b"Content-Length: 4\r\n\r\n".to_vec();
+    corrupt.extend_from_slice(&[0xff, 0xfe, 0xfd, 0xfc]);
+    stdin.write_all(&corrupt).unwrap();
+    // ...immediately followed by a valid request. If the bad frame were fatal, this would
+    // never be answered.
+    stdin
+        .write_all(&frame(&json!({"jsonrpc":"2.0","id":7,"method":"initialize","params":{}})))
+        .unwrap();
+    stdin.flush().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut buf = Vec::new();
+    let resp = read_one(&mut stdout, &mut buf, deadline)
+        .expect("server should answer the valid request after skipping the corrupt frame");
+    assert_eq!(resp["id"], json!(7), "expected the initialize response to survive");
+    assert!(resp.get("result").is_some(), "initialize should return a result");
+
+    drop(stdin);
+    let _ = child.wait();
+}

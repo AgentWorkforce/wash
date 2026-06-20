@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use serde_json::{Map, Value, json};
 use std::cell::Cell;
 use std::io::{Read, Write};
@@ -85,8 +85,13 @@ impl McpServer {
             buf.extend_from_slice(&chunk[..n]);
 
             while let Some(msg_bytes) = take_framed_message(&mut buf) {
-                let body = String::from_utf8(msg_bytes)
-                    .context("MCP frame body is not valid UTF-8")?;
+                // A corrupt frame (bad UTF-8, or unparseable JSON below) is skipped, not
+                // fatal: this is a long-lived stdio server and one bad frame must not take
+                // down every subsequent valid request. Mirrors the header-recovery in
+                // `take_framed_message`.
+                let Ok(body) = String::from_utf8(msg_bytes) else {
+                    continue;
+                };
                 let parsed: Value = match serde_json::from_str(&body) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -264,14 +269,13 @@ fn send(writer: &mut impl Write, payload: &Value) -> Result<()> {
 /// would stay at the front of the buffer forever and wedge the parser on subsequent reads.
 fn take_framed_message(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
     let header_end = find_subseq(buf, b"\r\n\r\n")?;
-    let drop_header = || -> Option<Vec<u8>> { None };
     let Ok(header) = std::str::from_utf8(&buf[..header_end]) else {
         buf.drain(..header_end + 4);
-        return drop_header();
+        return None;
     };
     let Some(len) = parse_content_length(header) else {
         buf.drain(..header_end + 4);
-        return drop_header();
+        return None;
     };
     let start = header_end + 4;
     if buf.len() < start + len {
