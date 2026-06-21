@@ -267,10 +267,7 @@ fn extract_tools(content: Option<&Value>) -> (Vec<String>, String) {
         }
         // Bash command body powers the categorizer's text heuristics. Only the
         // command string is read; nothing is persisted.
-        let canonical = name
-            .strip_prefix("mcp__relaywash__")
-            .or_else(|| name.strip_prefix("relaywash__"))
-            .unwrap_or(&name);
+        let canonical = crate::hooks::bare_relaywash_name(&name);
         if canonical == "Bash" {
             if let Some(cmd) = b
                 .get("input")

@@ -62,6 +62,20 @@ pub(crate) fn payload_field<'a>(
     payload.get(snake).or_else(|| payload.get(camel))
 }
 
+/// Map a tool name as Claude Code reports it to its bare relaywash name. The harness
+/// may surface a relaywash tool as either `mcp__relaywash__Read` or `relaywash__Read`
+/// depending on context; observation-side code (the categorizer, the observe log) wants
+/// the bare `Read`. Names with no relaywash prefix pass through unchanged.
+///
+/// Deliberately strips ONLY relaywash prefixes — the categorizer's own `canonical()`
+/// additionally folds `mcp__github__`, which changes categorization output and is a
+/// product decision, not a mechanical rename. Keep that separate.
+pub(crate) fn bare_relaywash_name(name: &str) -> &str {
+    name.strip_prefix("mcp__relaywash__")
+        .or_else(|| name.strip_prefix("relaywash__"))
+        .unwrap_or(name)
+}
+
 /// Map a session id to a filename-safe slug. Hooks compose paths like
 /// `${RELAYBURN_HOME}/observe/<session>.json`; without sanitization a crafted id like
 /// `../../etc/passwd` would let the harness write outside the intended directory.

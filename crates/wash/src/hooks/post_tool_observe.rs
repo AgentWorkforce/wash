@@ -101,11 +101,8 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
     let tool_name_full = super::payload_field(payload, "tool_name", "toolName")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    // Strip the `mcp__relaywash__` prefix if present so the log uses bare tool names.
-    let tool = tool_name_full
-        .strip_prefix("mcp__relaywash__")
-        .or_else(|| tool_name_full.strip_prefix("relaywash__"))
-        .unwrap_or(tool_name_full);
+    // Use the bare tool name (no relaywash prefix) so the log stays readable.
+    let tool = super::bare_relaywash_name(tool_name_full);
     if tool.is_empty() {
         return write_continue(out);
     }
