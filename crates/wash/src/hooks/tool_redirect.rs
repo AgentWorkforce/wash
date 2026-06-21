@@ -17,17 +17,11 @@ struct Pattern {
 /// Single source of truth: each row pairs a regex source with its hint.
 /// Adding a row is one line, and misalignment is no longer expressible.
 const PATTERNS: &[(&str, &str)] = &[
-    (
-        r"^(?:cat|bat|head|tail|less|more)\s+\S",
-        "relaywash__Read",
-    ),
+    (r"^(?:cat|bat|head|tail|less|more)\s+\S", "relaywash__Read"),
     (r"^grep\b", "relaywash__Search"),
     (r"^rg\b", "relaywash__Search"),
     (r"^find\s+\S", "relaywash__Search"),
-    (
-        r"^git\s+(?:status|diff|log|show)\b",
-        "relaywash__GitState",
-    ),
+    (r"^git\s+(?:status|diff|log|show)\b", "relaywash__GitState"),
     (
         r"^(?:pnpm|npm|yarn)\s+(?:run\s+)?test\b",
         "relaywash__TestRun",

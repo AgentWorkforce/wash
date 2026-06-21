@@ -96,7 +96,11 @@ impl Args {
         let paths: Vec<String> = v
             .get("paths")
             .and_then(|x| x.as_array())
-            .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
         let revision = v.get("revision").and_then(|x| x.as_str()).map(String::from);
         let base = v.get("base").and_then(|x| x.as_str()).map(String::from);
@@ -137,10 +141,18 @@ fn git(cwd: &str, args: &[&str], bytes: &mut u64) -> Result<String> {
         .with_context(|| format!("spawn git {}", args.join(" ")))?;
     *bytes += out.baseline;
     if out.timed_out {
-        return Err(anyhow!("git {} timed out after {}s", args.join(" "), GIT_TIMEOUT.as_secs()));
+        return Err(anyhow!(
+            "git {} timed out after {}s",
+            args.join(" "),
+            GIT_TIMEOUT.as_secs()
+        ));
     }
     if out.status != Some(0) {
-        let detail = if !out.stderr.is_empty() { &out.stderr } else { &out.stdout };
+        let detail = if !out.stderr.is_empty() {
+            &out.stderr
+        } else {
+            &out.stdout
+        };
         return Err(anyhow!("git {} failed: {}", args.join(" "), detail));
     }
     Ok(out.stdout)
@@ -166,7 +178,11 @@ fn git_status(a: &Args, bytes: &mut u64) -> Result<StatusOut> {
         .to_string();
 
     let (mut ahead, mut behind) = (0u32, 0u32);
-    if let Ok(s) = git(&a.cwd, &["rev-list", "--left-right", "--count", "@{u}...HEAD"], bytes) {
+    if let Ok(s) = git(
+        &a.cwd,
+        &["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+        bytes,
+    ) {
         let mut parts = s.split_whitespace();
         if let (Some(b), Some(aa)) = (parts.next(), parts.next()) {
             behind = b.parse().unwrap_or(0);
@@ -188,10 +204,18 @@ fn git_status(a: &Args, bytes: &mut u64) -> Result<StatusOut> {
         .map(|line| {
             let code = line.get(..2).unwrap_or("");
             let path = line.get(3..).unwrap_or("").to_string();
-            StatusFile { path, change: code_to_change(code) }
+            StatusFile {
+                path,
+                change: code_to_change(code),
+            }
         })
         .collect();
-    Ok(StatusOut { branch, ahead, behind, files })
+    Ok(StatusOut {
+        branch,
+        ahead,
+        behind,
+        files,
+    })
 }
 
 fn code_to_change(code: &str) -> String {
@@ -308,7 +332,11 @@ fn git_diff_or_show(a: &Args, bytes: &mut u64) -> Result<DiffOut> {
             stat_cmd.push(p.clone());
         }
     }
-    let stat = git(&a.cwd, &stat_cmd.iter().map(|s| s.as_str()).collect::<Vec<_>>(), bytes)?;
+    let stat = git(
+        &a.cwd,
+        &stat_cmd.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        bytes,
+    )?;
 
     let mut diff_cmd: Vec<String> = match a.op {
         Op::Show => vec!["show".into(), revision, "--no-color".into()],
@@ -328,7 +356,11 @@ fn git_diff_or_show(a: &Args, bytes: &mut u64) -> Result<DiffOut> {
             diff_cmd.push(p.clone());
         }
     }
-    let raw = git(&a.cwd, &diff_cmd.iter().map(|s| s.as_str()).collect::<Vec<_>>(), bytes)?;
+    let raw = git(
+        &a.cwd,
+        &diff_cmd.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        bytes,
+    )?;
     let per_file = parse_per_file_diffs(&raw, a.max_lines);
     let total = per_file.len();
     let limited: Vec<DiffFile> = per_file.into_iter().take(a.max_files).collect();
@@ -344,7 +376,11 @@ fn git_diff_or_show(a: &Args, bytes: &mut u64) -> Result<DiffOut> {
         .collect::<Vec<_>>()
         .join("\n");
 
-    Ok(DiffOut { summary, files: limited, truncated: total > a.max_files })
+    Ok(DiffOut {
+        summary,
+        files: limited,
+        truncated: total > a.max_files,
+    })
 }
 
 fn parse_per_file_diffs(raw: &str, max_lines: usize) -> Vec<DiffFile> {
@@ -392,7 +428,15 @@ fn parse_per_file_diffs(raw: &str, max_lines: usize) -> Vec<DiffFile> {
         let (body, truncated) = if total > max_lines {
             let half = max_lines / 2;
             let head: Vec<&str> = hunk_lines.iter().take(half).copied().collect();
-            let tail: Vec<&str> = hunk_lines.iter().rev().take(half).copied().collect::<Vec<_>>().into_iter().rev().collect();
+            let tail: Vec<&str> = hunk_lines
+                .iter()
+                .rev()
+                .take(half)
+                .copied()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
             let body = format!(
                 "{}\n... ({} lines truncated) ...\n{}",
                 head.join("\n"),
@@ -404,7 +448,13 @@ fn parse_per_file_diffs(raw: &str, max_lines: usize) -> Vec<DiffFile> {
             (hunk_lines.join("\n"), false)
         };
 
-        out.push(DiffFile { path, added, removed, hunks: body, truncated });
+        out.push(DiffFile {
+            path,
+            added,
+            removed,
+            hunks: body,
+            truncated,
+        });
     }
     out
 }
@@ -441,7 +491,12 @@ mod tests {
             .current_dir(cwd)
             .output()
             .expect("git");
-        assert!(r.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&r.stderr));
+        assert!(
+            r.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&r.stderr)
+        );
     }
 
     fn write(cwd: &Path, name: &str, body: &str) {
@@ -464,7 +519,10 @@ mod tests {
         let paths: Vec<&str> = s.files.iter().map(|f| f.path.as_str()).collect();
         assert!(paths.contains(&"a.txt"));
         assert!(paths.contains(&"b.txt"));
-        assert!(bytes > 0, "status should accumulate a savings baseline across its git calls");
+        assert!(
+            bytes > 0,
+            "status should accumulate a savings baseline across its git calls"
+        );
     }
 
     #[test]
@@ -476,7 +534,8 @@ mod tests {
         run_in(p, &["commit", "-q", "-m", "first"]);
         write(p, "a.txt", "2\n");
         run_in(p, &["commit", "-q", "-am", "second"]);
-        let args = Args::parse(&json!({"op":"log","cwd": p.to_string_lossy(),"maxFiles": 10})).unwrap();
+        let args =
+            Args::parse(&json!({"op":"log","cwd": p.to_string_lossy(),"maxFiles": 10})).unwrap();
         let out = git_log(&args, &mut 0).unwrap();
         assert_eq!(out.commits.len(), 2);
         assert_eq!(out.commits[0].subject, "second");
@@ -496,7 +555,8 @@ mod tests {
             "op":"diff",
             "cwd": p.to_string_lossy(),
             "maxLines": 20,
-        })).unwrap();
+        }))
+        .unwrap();
         let out = git_diff_or_show(&args, &mut 0).unwrap();
         let f = &out.files[0];
         assert!(f.truncated, "expected truncation");

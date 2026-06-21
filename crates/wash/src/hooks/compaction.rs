@@ -119,9 +119,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
     let event = build_event(&trigger, &pre_entries, &post_entries);
 
     if let Err(e) = append_session_event(home, &session_id, &event) {
-        eprintln!(
-            "relaywash: post-compact ledger append failed (session={session_id}): {e}"
-        );
+        eprintln!("relaywash: post-compact ledger append failed (session={session_id}): {e}");
     }
 
     // Snapshot is consumed: best-effort cleanup so we don't accumulate stale
@@ -164,14 +162,16 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
     // surviving tool_result blocks back to their producing tool. Independent of
     // survival: a `tool_use` block carries the tool name even if its result
     // ended up in a different message uuid.
-    let pre_tool_use_to_name: HashMap<String, String> = pre
-        .iter()
-        .flat_map(|row| extract_tool_uses(row))
-        .collect();
+    let pre_tool_use_to_name: HashMap<String, String> =
+        pre.iter().flat_map(|row| extract_tool_uses(row)).collect();
 
     let post_uuids: HashSet<String> = post
         .iter()
-        .filter_map(|row| row.get("uuid").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .filter_map(|row| {
+            row.get("uuid")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
         .collect();
 
     let mut pre_counts: indexmap::IndexMap<String, ToolSurvival> = indexmap::IndexMap::new();
@@ -312,7 +312,10 @@ fn is_synthetic_summary(row: &Value) -> bool {
     if row.get("type").and_then(|v| v.as_str()) == Some("summary") {
         return true;
     }
-    if let Some(role) = row.get("message").and_then(|m| m.get("role")).and_then(|v| v.as_str())
+    if let Some(role) = row
+        .get("message")
+        .and_then(|m| m.get("role"))
+        .and_then(|v| v.as_str())
         && role == "system"
         && row
             .get("subtype")
@@ -337,7 +340,10 @@ fn append_session_event(home: &Path, session_id: &str, event: &CompactionEvent) 
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{session_id}.jsonl"));
     let line = serde_json::to_string(event)?;
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     writeln!(f, "{line}")?;
     Ok(())
 }
@@ -396,9 +402,8 @@ mod tests {
 
     fn read_event(home: &Path, session: &str) -> Value {
         let path = home.join(SESSIONS_SUBDIR).join(format!("{session}.jsonl"));
-        let raw = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("session ledger missing at {}: {e}", path.display())
-        });
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("session ledger missing at {}: {e}", path.display()));
         let last = raw.lines().filter(|l| !l.is_empty()).next_back().unwrap();
         serde_json::from_str(last).unwrap()
     }
@@ -496,10 +501,7 @@ mod tests {
         let read = &ev["perToolSurvival"]["Read"];
         assert_eq!(read["callsBefore"], 1);
         assert_eq!(read["callsAfter"], 1);
-        assert_eq!(
-            read["estimatedTokensBefore"],
-            read["estimatedTokensAfter"]
-        );
+        assert_eq!(read["estimatedTokensBefore"], read["estimatedTokensAfter"]);
     }
 
     #[test]
@@ -596,7 +598,10 @@ mod tests {
         let snap = home.join(SNAPSHOT_SUBDIR).join("s-clean-pre.jsonl");
         assert!(snap.exists());
         drive_post(home, payload);
-        assert!(!snap.exists(), "snapshot should be cleaned up after post-compact");
+        assert!(
+            !snap.exists(),
+            "snapshot should be cleaned up after post-compact"
+        );
     }
 
     #[test]

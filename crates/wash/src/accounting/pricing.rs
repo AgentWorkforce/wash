@@ -84,7 +84,11 @@ mod tests {
 
     #[test]
     fn unknown_model_returns_zero() {
-        let usage = Usage { input_tokens: 1000, output_tokens: 500, ..Default::default() };
+        let usage = Usage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            ..Default::default()
+        };
         assert_eq!(estimate("claude-future-9000", &usage), 0.0);
         assert_eq!(estimate("", &usage), 0.0);
     }
@@ -118,7 +122,10 @@ mod tests {
 
     #[test]
     fn haiku_4_lookup() {
-        let usage = Usage { input_tokens: 1_000_000, ..Default::default() };
+        let usage = Usage {
+            input_tokens: 1_000_000,
+            ..Default::default()
+        };
         let cost = estimate("claude-haiku-4-1-20260101", &usage);
         assert!((cost - 1.0).abs() < 1e-9, "got {cost}");
     }

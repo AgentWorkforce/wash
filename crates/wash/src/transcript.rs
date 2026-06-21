@@ -30,7 +30,10 @@ pub fn parse_lines(text: &str, mut on_bad_line: impl FnMut(&serde_json::Error)) 
 pub fn read_file(path: &Path) -> std::io::Result<Vec<Value>> {
     let raw = std::fs::read_to_string(path)?;
     Ok(parse_lines(&raw, |e| {
-        eprintln!("relaywash: skipped malformed JSONL line in {}: {e}", path.display());
+        eprintln!(
+            "relaywash: skipped malformed JSONL line in {}: {e}",
+            path.display()
+        );
     }))
 }
 

@@ -68,16 +68,29 @@ fn run(args: &Value) -> Result<ToolResult> {
     }
 
     let cwd: PathBuf = super::cwd_arg(args);
-    let pattern = args.get("pattern").and_then(|v| v.as_str()).map(String::from);
+    let pattern = args
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let paths: Vec<String> = args
         .get("paths")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
-    let failures_only = args.get("failuresOnly").and_then(|v| v.as_bool()).unwrap_or(true);
+    let failures_only = args
+        .get("failuresOnly")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let max_failures = super::usize_arg(args, "maxFailures", DEFAULT_MAX_FAILURES);
 
-    let requested = args.get("runner").and_then(|v| v.as_str()).unwrap_or("auto");
+    let requested = args
+        .get("runner")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     let runner = if requested == "auto" {
         detect_runner(&cwd)
     } else {
@@ -116,8 +129,12 @@ fn run(args: &Value) -> Result<ToolResult> {
             }));
         }
     };
-    let (stdout, stderr, baseline, timed_out) =
-        (captured.stdout, captured.stderr, captured.baseline, captured.timed_out);
+    let (stdout, stderr, baseline, timed_out) = (
+        captured.stdout,
+        captured.stderr,
+        captured.baseline,
+        captured.timed_out,
+    );
     let raw = format!("{stdout}{stderr}");
     let log_path = logs::write("testrun", &raw).ok();
 
@@ -279,13 +296,22 @@ fn parse_pytest(raw: &str) -> ParseOut {
     static SKIPPED: OnceLock<Regex> = OnceLock::new();
     static FAIL_LINE: OnceLock<Regex> = OnceLock::new();
     let mut out = ParseOut::default();
-    if let Some(c) = PASSED.get_or_init(|| Regex::new(r"(\d+)\s+passed").unwrap()).captures(raw) {
+    if let Some(c) = PASSED
+        .get_or_init(|| Regex::new(r"(\d+)\s+passed").unwrap())
+        .captures(raw)
+    {
         out.passed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = FAILED.get_or_init(|| Regex::new(r"(\d+)\s+failed").unwrap()).captures(raw) {
+    if let Some(c) = FAILED
+        .get_or_init(|| Regex::new(r"(\d+)\s+failed").unwrap())
+        .captures(raw)
+    {
         out.failed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = SKIPPED.get_or_init(|| Regex::new(r"(\d+)\s+skipped").unwrap()).captures(raw) {
+    if let Some(c) = SKIPPED
+        .get_or_init(|| Regex::new(r"(\d+)\s+skipped").unwrap())
+        .captures(raw)
+    {
         out.skipped = c[1].parse().unwrap_or(0);
     }
     let fail_re = FAIL_LINE.get_or_init(|| Regex::new(r"FAILED\s+(\S+)::(\S+)").unwrap());
@@ -339,7 +365,10 @@ fn parse_cargo_test(raw: &str) -> ParseOut {
             if t.is_empty() {
                 break;
             }
-            if !t.starts_with(char::is_whitespace) && !line.starts_with(' ') && !line.starts_with('\t') {
+            if !t.starts_with(char::is_whitespace)
+                && !line.starts_with(' ')
+                && !line.starts_with('\t')
+            {
                 // Stop when we leave the indented block.
                 if !t.starts_with("test ") && !t.contains("::") {
                     break;
@@ -361,13 +390,22 @@ fn parse_node_test(raw: &str) -> ParseOut {
     static SKIP: OnceLock<Regex> = OnceLock::new();
     static NOT_OK: OnceLock<Regex> = OnceLock::new();
     let mut out = ParseOut::default();
-    if let Some(c) = PASS.get_or_init(|| Regex::new(r"#\s*pass\s+(\d+)").unwrap()).captures(raw) {
+    if let Some(c) = PASS
+        .get_or_init(|| Regex::new(r"#\s*pass\s+(\d+)").unwrap())
+        .captures(raw)
+    {
         out.passed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = FAIL.get_or_init(|| Regex::new(r"#\s*fail\s+(\d+)").unwrap()).captures(raw) {
+    if let Some(c) = FAIL
+        .get_or_init(|| Regex::new(r"#\s*fail\s+(\d+)").unwrap())
+        .captures(raw)
+    {
         out.failed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = SKIP.get_or_init(|| Regex::new(r"#\s*skipped\s+(\d+)").unwrap()).captures(raw) {
+    if let Some(c) = SKIP
+        .get_or_init(|| Regex::new(r"#\s*skipped\s+(\d+)").unwrap())
+        .captures(raw)
+    {
         out.skipped = c[1].parse().unwrap_or(0);
     }
     let not_ok = NOT_OK.get_or_init(|| Regex::new(r"(?m)^not ok \d+ - (.+)$").unwrap());
@@ -384,7 +422,8 @@ fn parse_node_test(raw: &str) -> ParseOut {
 fn parse_jest(raw: &str) -> ParseOut {
     static SUMMARY: OnceLock<Regex> = OnceLock::new();
     let re = SUMMARY.get_or_init(|| {
-        Regex::new(r"Tests?:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(\d+)\s+passed").unwrap()
+        Regex::new(r"Tests?:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(\d+)\s+passed")
+            .unwrap()
     });
     let mut out = ParseOut::default();
     if let Some(c) = re.captures(raw) {
@@ -401,7 +440,9 @@ fn parse_jest(raw: &str) -> ParseOut {
             continue;
         }
         let after_marker = &raw[pos + '●'.len_utf8()..];
-        let Some(name_end) = after_marker.find('\n') else { continue };
+        let Some(name_end) = after_marker.find('\n') else {
+            continue;
+        };
         let name = after_marker[..name_end].trim().to_string();
         if name.is_empty() {
             continue;
@@ -420,7 +461,11 @@ fn parse_jest(raw: &str) -> ParseOut {
             }
         }
         let body = &raw[body_abs_start..body_end];
-        let truncated = if body.len() > 1000 { &body[..1000] } else { body };
+        let truncated = if body.len() > 1000 {
+            &body[..1000]
+        } else {
+            body
+        };
         out.failures.push(Failure {
             name,
             file: String::new(),

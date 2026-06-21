@@ -3,7 +3,11 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "wash", version, about = "relaywash — clean agent tool output, lower token burn")]
+#[command(
+    name = "wash",
+    version,
+    about = "relaywash — clean agent tool output, lower token burn"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -14,9 +18,7 @@ enum Command {
     /// Run the MCP stdio server (default action).
     Mcp,
     /// Run a hook handler. `kind` matches the entry registered in hooks/hooks.json.
-    Hook {
-        kind: String,
-    },
+    Hook { kind: String },
     /// Print the relayburn savings summary for a session (or all sessions).
     Savings {
         /// Session id. Omit to aggregate across every session in the ledger.
@@ -90,7 +92,13 @@ fn main() -> Result<()> {
 
 fn run_bench(action: BenchCmd) -> Result<()> {
     match action {
-        BenchCmd::Run { repo_root, tasks, fast, out, label } => {
+        BenchCmd::Run {
+            repo_root,
+            tasks,
+            fast,
+            out,
+            label,
+        } => {
             let root = resolve_repo_root(repo_root)?;
             let report = wash::bench::run_suite(&wash::bench::RunOptions {
                 repo_root: root,
@@ -120,7 +128,13 @@ fn run_bench(action: BenchCmd) -> Result<()> {
             }
             Ok(())
         }
-        BenchCmd::Compare { before, after, max_bytes_growth, max_calls_growth, json } => {
+        BenchCmd::Compare {
+            before,
+            after,
+            max_bytes_growth,
+            max_calls_growth,
+            json,
+        } => {
             let before_raw = std::fs::read_to_string(&before)
                 .with_context(|| format!("reading {}", before.display()))?;
             let after_raw = std::fs::read_to_string(&after)
@@ -167,7 +181,10 @@ fn resolve_repo_root(explicit: Option<PathBuf>) -> Result<PathBuf> {
 }
 
 fn print_human_summary(report: &wash::bench::SuiteReport) {
-    eprintln!("bench: label={} schema={}", report.label, report.schema_version);
+    eprintln!(
+        "bench: label={} schema={}",
+        report.label, report.schema_version
+    );
     for task in &report.tasks {
         let status = if task.passed { "ok" } else { "FAIL" };
         eprintln!(
@@ -229,10 +246,7 @@ fn print_compare_summary(
             d.status,
         );
         if !d.newly_failing_expectations.is_empty() {
-            eprintln!(
-                "    newly failing: {:?}",
-                d.newly_failing_expectations
-            );
+            eprintln!("    newly failing: {:?}", d.newly_failing_expectations);
         }
     }
     if outcome.regressions.is_empty() {

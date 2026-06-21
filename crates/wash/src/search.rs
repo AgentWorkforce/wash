@@ -77,7 +77,11 @@ pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
                 match_count: 0,
             })
             .collect();
-        return Ok(SearchOutput { hits, skipped: Vec::new(), truncated: false });
+        return Ok(SearchOutput {
+            hits,
+            skipped: Vec::new(),
+            truncated: false,
+        });
     };
 
     let matcher = RegexMatcher::new_line_matcher(&pattern)?;
@@ -123,7 +127,11 @@ pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
         let snippets = sink.into_snippets(opts.context_lines);
         let rel = relativize(&opts.cwd, abs);
         if is_binary {
-            skipped.push(SkippedFile { path: rel.clone(), reason: "binary".into(), bytes: None });
+            skipped.push(SkippedFile {
+                path: rel.clone(),
+                reason: "binary".into(),
+                bytes: None,
+            });
             continue;
         }
         if snippets.is_empty() {
@@ -149,7 +157,11 @@ pub fn run(opts: SearchOpts) -> Result<SearchOutput> {
             });
         }
     }
-    Ok(SearchOutput { hits, skipped, truncated })
+    Ok(SearchOutput {
+        hits,
+        skipped,
+        truncated,
+    })
 }
 
 struct HitSink {
@@ -168,7 +180,11 @@ struct GroupedSnippet {
 
 impl HitSink {
     fn new() -> Self {
-        Self { lines: BTreeMap::new(), match_lines: HashSet::new(), is_binary: false }
+        Self {
+            lines: BTreeMap::new(),
+            match_lines: HashSet::new(),
+            is_binary: false,
+        }
     }
 
     fn record(&mut self, line: u32, bytes: &[u8], is_match: bool) {
@@ -191,7 +207,10 @@ impl HitSink {
         // BTreeMap iterates keys in sorted order — no extra sort needed.
         let iter: Vec<u32> = self.lines.keys().copied().collect();
 
-        let flush = |group: &mut Vec<u32>, snippets: &mut Vec<GroupedSnippet>, lines: &BTreeMap<u32, String>, match_lines: &HashSet<u32>| {
+        let flush = |group: &mut Vec<u32>,
+                     snippets: &mut Vec<GroupedSnippet>,
+                     lines: &BTreeMap<u32, String>,
+                     match_lines: &HashSet<u32>| {
             if group.is_empty() {
                 return;
             }
@@ -310,8 +329,14 @@ mod tests {
         .unwrap();
         assert!(!out.hits.is_empty(), "expected a hit on the non-UTF-8 line");
         let snippet = &out.hits[0].snippet;
-        assert!(snippet.contains("let x = \"caf"), "body should survive: {snippet:?}");
-        assert!(snippet.contains('\u{FFFD}'), "bad byte should become U+FFFD: {snippet:?}");
+        assert!(
+            snippet.contains("let x = \"caf"),
+            "body should survive: {snippet:?}"
+        );
+        assert!(
+            snippet.contains('\u{FFFD}'),
+            "bad byte should become U+FFFD: {snippet:?}"
+        );
     }
 
     #[test]
@@ -358,14 +383,25 @@ mod tests {
         .unwrap();
 
         let hit_paths: Vec<&str> = out.hits.iter().map(|h| h.path.as_str()).collect();
-        assert!(hit_paths.contains(&"ok.txt"), "text hit should be present, got {hit_paths:?}");
+        assert!(
+            hit_paths.contains(&"ok.txt"),
+            "text hit should be present, got {hit_paths:?}"
+        );
         assert!(
             !hit_paths.contains(&"blob.bin"),
             "binary file should not produce hits, got {hit_paths:?}",
         );
-        let skipped_bin: Vec<&SkippedFile> =
-            out.skipped.iter().filter(|s| s.path == "blob.bin").collect();
-        assert_eq!(skipped_bin.len(), 1, "expected blob.bin in skipped: {:?}", out.skipped);
+        let skipped_bin: Vec<&SkippedFile> = out
+            .skipped
+            .iter()
+            .filter(|s| s.path == "blob.bin")
+            .collect();
+        assert_eq!(
+            skipped_bin.len(),
+            1,
+            "expected blob.bin in skipped: {:?}",
+            out.skipped
+        );
         assert_eq!(skipped_bin[0].reason, "binary");
     }
 
@@ -391,9 +427,17 @@ mod tests {
         let hit_paths: Vec<&str> = out.hits.iter().map(|h| h.path.as_str()).collect();
         assert!(hit_paths.contains(&"small.txt"));
         assert!(!hit_paths.contains(&"huge.txt"));
-        let skipped: Vec<&SkippedFile> =
-            out.skipped.iter().filter(|s| s.path == "huge.txt").collect();
-        assert_eq!(skipped.len(), 1, "expected huge.txt skipped, got {:?}", out.skipped);
+        let skipped: Vec<&SkippedFile> = out
+            .skipped
+            .iter()
+            .filter(|s| s.path == "huge.txt")
+            .collect();
+        assert_eq!(
+            skipped.len(),
+            1,
+            "expected huge.txt skipped, got {:?}",
+            out.skipped
+        );
         assert_eq!(skipped[0].reason, "size");
         assert!(skipped[0].bytes.unwrap() > 256);
     }
@@ -442,7 +486,10 @@ mod tests {
         })
         .unwrap();
 
-        assert!(out.truncated, "expected truncated=true once byte budget exceeded");
+        assert!(
+            out.truncated,
+            "expected truncated=true once byte budget exceeded"
+        );
         let total: usize = out.hits.iter().map(|h| h.snippet.len()).sum();
         // We allow one hit to overshoot the budget (the always-accept-first rule),
         // but the total should stay close to it — not a free-for-all.
@@ -451,7 +498,11 @@ mod tests {
             "expected truncation to bound total snippet bytes near budget, got {total}",
         );
         // Sanity: without the budget we'd get >>20 hits.
-        assert!(out.hits.len() < 200, "got {} hits, budget should have cut them", out.hits.len());
+        assert!(
+            out.hits.len() < 200,
+            "got {} hits, budget should have cut them",
+            out.hits.len()
+        );
     }
 
     #[test]
@@ -490,6 +541,10 @@ mod tests {
             max_total_bytes: Some(10),
         })
         .unwrap();
-        assert_eq!(out.hits.len(), 1, "first hit must be emitted even if it busts the budget");
+        assert_eq!(
+            out.hits.len(),
+            1,
+            "first hit must be emitted even if it busts the budget"
+        );
     }
 }

@@ -63,9 +63,14 @@ mod tests {
         // filter fixes (sorting all logs together would return this instead).
         write("washzzz", "wrong-family").unwrap();
 
-        let found = latest("washcorefirst").unwrap().expect("a washcorefirst log exists");
+        let found = latest("washcorefirst")
+            .unwrap()
+            .expect("a washcorefirst log exists");
         let body = std::fs::read_to_string(&found).unwrap();
-        assert_eq!(body, "second", "latest must return the newest log of the asked prefix");
+        assert_eq!(
+            body, "second",
+            "latest must return the newest log of the asked prefix"
+        );
         let _ = second;
 
         // An unused prefix yields nothing rather than someone else's log.

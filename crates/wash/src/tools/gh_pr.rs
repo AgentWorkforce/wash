@@ -88,10 +88,18 @@ fn gh(cwd: &std::path::Path, args: &[&str], bytes: &mut u64) -> Result<String> {
     let out = process::run("gh", args, cwd, GH_TIMEOUT)?;
     *bytes += out.baseline;
     if out.timed_out {
-        return Err(anyhow!("gh {} timed out after {}s", args.join(" "), GH_TIMEOUT.as_secs()));
+        return Err(anyhow!(
+            "gh {} timed out after {}s",
+            args.join(" "),
+            GH_TIMEOUT.as_secs()
+        ));
     }
     if out.status != Some(0) {
-        let err = if !out.stderr.is_empty() { &out.stderr } else { &out.stdout };
+        let err = if !out.stderr.is_empty() {
+            &out.stderr
+        } else {
+            &out.stdout
+        };
         return Err(anyhow!("gh {} failed: {}", args.join(" "), err.trim()));
     }
     Ok(out.stdout)
@@ -105,7 +113,11 @@ fn view(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Value> {
     let custom_fields: Vec<String> = args
         .get("fields")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let fields: Vec<&str> = if custom_fields.is_empty() {
         VIEW_DEFAULT_FIELDS.to_vec()
@@ -128,11 +140,17 @@ fn view(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Value> {
                 *author = login;
             }
         }
-        if let Some(body) = obj.get_mut("body").and_then(|v| v.as_str().map(String::from)) {
+        if let Some(body) = obj
+            .get_mut("body")
+            .and_then(|v| v.as_str().map(String::from))
+        {
             if body.chars().count() > BODY_TRUNCATE {
                 obj.insert(
                     "body".into(),
-                    Value::String(format!("{}\n... (truncated)", truncate_chars(&body, BODY_TRUNCATE))),
+                    Value::String(format!(
+                        "{}\n... (truncated)",
+                        truncate_chars(&body, BODY_TRUNCATE)
+                    )),
                 );
             }
         }

@@ -1,8 +1,8 @@
 pub mod build;
 pub mod edit;
-mod logs;
 pub mod gh_pr;
 pub mod git_state;
+mod logs;
 pub mod read;
 pub mod search;
 pub mod test_run;

@@ -48,18 +48,18 @@ fn run(args: &Value, ctx: &ToolContext) -> Result<ToolResult> {
         .ok_or_else(|| anyhow::anyhow!("missing path"))?
         .to_string();
     let mode = args.get("mode").and_then(|v| v.as_str()).map(String::from);
-    let range: Option<(usize, usize)> = args
-        .get("range")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| {
-            if arr.len() == 2 {
-                let a = arr[0].as_u64()? as usize;
-                let b = arr[1].as_u64()? as usize;
-                Some((a, b))
-            } else {
-                None
-            }
-        });
+    let range: Option<(usize, usize)> =
+        args.get("range")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                if arr.len() == 2 {
+                    let a = arr[0].as_u64()? as usize;
+                    let b = arr[1].as_u64()? as usize;
+                    Some((a, b))
+                } else {
+                    None
+                }
+            });
     let session_id = ctx.session_id.clone().unwrap_or_else(|| "default".into());
 
     let language = Language::detect(&path);
@@ -200,8 +200,7 @@ fn augment_with_small_bodies(
         } else {
             1
         };
-        let body_rows: Vec<u32> =
-            (header_idx..=body_end).map(|i| i as u32 + 1).collect();
+        let body_rows: Vec<u32> = (header_idx..=body_end).map(|i| i as u32 + 1).collect();
         sig_lines.splice(sig_idx..sig_idx + to_replace, full_body);
         source_lines.splice(sig_idx..sig_idx + to_replace, body_rows);
     }
@@ -219,7 +218,9 @@ mod tests {
     use tempfile::TempDir;
 
     fn ctx(session: &str) -> ToolContext {
-        ToolContext { session_id: Some(session.to_string()) }
+        ToolContext {
+            session_id: Some(session.to_string()),
+        }
     }
 
     fn call(args: Value, ctx: &ToolContext) -> Result<Value> {
@@ -267,7 +268,10 @@ mod tests {
 
         let v = call(json!({"path": p.to_string_lossy()}), &ctx("s3")).unwrap();
         let content = v["content"].as_str().unwrap();
-        assert!(content.contains("export function compute"), "header preserved");
+        assert!(
+            content.contains("export function compute"),
+            "header preserved"
+        );
         assert!(content.contains("…"), "body elided");
         assert!(!content.contains("padding line"), "body bytes elided");
         assert!(content.contains("export class Greeter"), "class preserved");

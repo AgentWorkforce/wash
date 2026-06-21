@@ -52,9 +52,15 @@ struct BuildError {
 
 fn run(args: &Value) -> Result<ToolResult> {
     let cwd: PathBuf = super::cwd_arg(args);
-    let target = args.get("target").and_then(|v| v.as_str()).map(String::from);
+    let target = args
+        .get("target")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let tail_lines = super::usize_arg(args, "errorTailLines", DEFAULT_TAIL_LINES);
-    let requested = args.get("builder").and_then(|v| v.as_str()).unwrap_or("auto");
+    let requested = args
+        .get("builder")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     let builder = if requested == "auto" {
         detect_builder(&cwd)
     } else {
@@ -116,32 +122,41 @@ fn run(args: &Value) -> Result<ToolResult> {
 
     let success = status_code == Some(0);
     if success {
-        return ok_value_with_baseline(json!({
-            "builder": builder,
-            "success": true,
-            "duration": duration,
-            "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        }), baseline);
+        return ok_value_with_baseline(
+            json!({
+                "builder": builder,
+                "success": true,
+                "duration": duration,
+                "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            }),
+            baseline,
+        );
     }
 
     let errors = parse_errors(&builder, &raw);
     if !errors.is_empty() {
-        return ok_value_with_baseline(json!({
+        return ok_value_with_baseline(
+            json!({
+                "builder": builder,
+                "success": false,
+                "duration": duration,
+                "errors": errors,
+                "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            }),
+            baseline,
+        );
+    }
+    let tail = tail_lines_of(&raw, tail_lines);
+    ok_value_with_baseline(
+        json!({
             "builder": builder,
             "success": false,
             "duration": duration,
-            "errors": errors,
+            "errorTail": tail,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        }), baseline);
-    }
-    let tail = tail_lines_of(&raw, tail_lines);
-    ok_value_with_baseline(json!({
-        "builder": builder,
-        "success": false,
-        "duration": duration,
-        "errorTail": tail,
-        "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-    }), baseline)
+        }),
+        baseline,
+    )
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
@@ -254,7 +269,13 @@ fn parse_go_errors(raw: &str) -> Vec<BuildError> {
         .collect()
 }
 
-fn cap_to_err(cap: &regex::Captures, file: usize, line: usize, col: usize, msg: usize) -> BuildError {
+fn cap_to_err(
+    cap: &regex::Captures,
+    file: usize,
+    line: usize,
+    col: usize,
+    msg: usize,
+) -> BuildError {
     BuildError {
         file: cap[file].into(),
         line: cap[line].parse().unwrap_or(0),
@@ -296,7 +317,8 @@ mod tests {
 
     #[test]
     fn parses_cargo_errors() {
-        let raw = "error[E0425]: cannot find value `x` in this scope\n  --> src/main.rs:3:5\n   |\n";
+        let raw =
+            "error[E0425]: cannot find value `x` in this scope\n  --> src/main.rs:3:5\n   |\n";
         let errs = parse_cargo_errors(raw);
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].file, "src/main.rs");
@@ -331,7 +353,10 @@ mod tests {
 
     #[test]
     fn tail_lines_returns_last_n() {
-        let raw = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let raw = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let t = tail_lines_of(&raw, 3);
         assert_eq!(t, "line 8\nline 9\nline 10");
     }

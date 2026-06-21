@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::Path;
 
-use crate::ast::{parses_cleanly};
+use crate::ast::parses_cleanly;
 use crate::fuzzy::fuzzy_find_all;
 use crate::language::Language;
 use crate::mcp::{Tool, ToolResult};
@@ -170,7 +170,10 @@ fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
     for edit in edits.iter() {
         let matches = locate(&current, edit);
         if matches.is_empty() {
-            partial.push((edit.input_index, PartialResult::Failed("oldText not found".into())));
+            partial.push((
+                edit.input_index,
+                PartialResult::Failed("oldText not found".into()),
+            ));
             return rollback(path, edits, partial, None);
         }
         if matches.len() > 1 {
@@ -190,10 +193,7 @@ fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
         partial.push((edit.input_index, PartialResult::Ok));
     }
 
-    if clean_before
-        && language != Language::Unknown
-        && !parses_cleanly(&current, language)
-    {
+    if clean_before && language != Language::Unknown && !parses_cleanly(&current, language) {
         return rollback(
             path,
             edits,
@@ -377,7 +377,8 @@ mod tests {
     #[test]
     fn single_edit_writes_verbatim_new_text() {
         let (_dir, path) = tmp_file("export const x = 1;\n", ".ts");
-        let v = call(json!([{"path": path, "oldText": "const x = 1", "newText": "const x = 42"}])).unwrap();
+        let v = call(json!([{"path": path, "oldText": "const x = 1", "newText": "const x = 42"}]))
+            .unwrap();
         assert_eq!(v["results"][0]["ok"], true);
         assert_eq!(fs::read_to_string(&path).unwrap(), "export const x = 42;\n");
     }
@@ -395,7 +396,13 @@ mod tests {
             .as_array()
             .unwrap()
             .iter()
-            .map(|r| if r["ok"].as_bool().unwrap_or(false) { 1 } else { 0 })
+            .map(|r| {
+                if r["ok"].as_bool().unwrap_or(false) {
+                    1
+                } else {
+                    0
+                }
+            })
             .sum();
         assert_eq!(oks, 2);
         assert_eq!(fs::read_to_string(&a).unwrap(), "a = 11");
@@ -435,7 +442,11 @@ mod tests {
         }]))
         .unwrap();
         assert_eq!(v["results"][0]["ok"], false);
-        assert_eq!(fs::read_to_string(&path).unwrap(), before, "file must be unchanged");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            before,
+            "file must be unchanged"
+        );
     }
 
     #[test]
@@ -443,7 +454,10 @@ mod tests {
         let (_dir, path) = tmp_file("hello\n", ".ts");
         let v = call(json!([{"path": path, "oldText": "world", "newText": "X"}])).unwrap();
         assert_eq!(v["results"][0]["ok"], false);
-        assert_eq!(v["results"][0]["reason"].as_str().unwrap(), "oldText not found");
+        assert_eq!(
+            v["results"][0]["reason"].as_str().unwrap(),
+            "oldText not found"
+        );
     }
 
     #[test]
@@ -462,7 +476,10 @@ mod tests {
             reason0.contains("sibling edit 1 failed"),
             "expected sibling-fail reason, got: {reason0}"
         );
-        assert_eq!(v["results"][1]["reason"].as_str().unwrap(), "oldText not found");
+        assert_eq!(
+            v["results"][1]["reason"].as_str().unwrap(),
+            "oldText not found"
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "a = 1\nb = 2\n");
     }
 
@@ -501,7 +518,10 @@ mod tests {
         for i in 0..3 {
             assert_eq!(v["results"][i]["ok"], false, "edit {i} should be ok:false");
         }
-        assert_eq!(v["results"][1]["reason"].as_str().unwrap(), "oldText not found");
+        assert_eq!(
+            v["results"][1]["reason"].as_str().unwrap(),
+            "oldText not found"
+        );
         for i in [0usize, 2] {
             let reason = v["results"][i]["reason"].as_str().unwrap();
             assert!(
@@ -530,6 +550,10 @@ mod tests {
                 "edit {i} expected post-edit reason, got: {reason}"
             );
         }
-        assert_eq!(fs::read_to_string(&path).unwrap(), before, "file must be unchanged");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            before,
+            "file must be unchanged"
+        );
     }
 }

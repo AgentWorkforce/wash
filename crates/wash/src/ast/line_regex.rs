@@ -36,7 +36,10 @@ pub fn extract(text: &str, language: Language) -> Signatures {
         }
         if is_header(line) {
             if let Some(sym) = symbol_from_header(line) {
-                line_map.push(LineMapEntry { symbol: sym, line: i as u32 + 1 });
+                line_map.push(LineMapEntry {
+                    symbol: sym,
+                    line: i as u32 + 1,
+                });
             }
             let trimmed = strip_inline_comments(line).trim_end().to_string();
             if trimmed.ends_with('{') {
@@ -83,9 +86,17 @@ pub fn extract(text: &str, language: Language) -> Signatures {
         i += 1;
     }
     // Each `out` entry is a single line; `source_lines` is aligned 1:1.
-    let content = out.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join("\n");
+    let content = out
+        .iter()
+        .map(|(s, _)| s.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     let source_lines: Vec<u32> = out.iter().map(|(_, r)| *r).collect();
-    Signatures { content, line_map, source_lines }
+    Signatures {
+        content,
+        line_map,
+        source_lines,
+    }
 }
 
 fn header_re() -> &'static [Regex] {
@@ -106,7 +117,10 @@ fn symbol_re() -> &'static [Regex] {
     static R: OnceLock<Vec<Regex>> = OnceLock::new();
     R.get_or_init(|| {
         vec![
-            Regex::new(r"(?:function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)").unwrap(),
+            Regex::new(
+                r"(?:function|class|interface|type|enum|const|let|var)\s+([A-Za-z_$][\w$]*)",
+            )
+            .unwrap(),
             Regex::new(r"(?:def|class)\s+([A-Za-z_][\w]*)").unwrap(),
             Regex::new(r"(?:func|type)\s+([A-Za-z_][\w]*)").unwrap(),
             Regex::new(r"(?:fn|struct|enum|trait|mod)\s+([A-Za-z_][\w]*)").unwrap(),
@@ -129,7 +143,11 @@ fn symbol_from_header(line: &str) -> Option<String> {
 
 fn strip_inline_comments(s: &str) -> String {
     static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
-    let no_line = if let Some(i) = s.find("//") { &s[..i] } else { s };
+    let no_line = if let Some(i) = s.find("//") {
+        &s[..i]
+    } else {
+        s
+    };
     let block_re = BLOCK_RE.get_or_init(|| Regex::new(r"/\*.*?\*/").unwrap());
     block_re.replace_all(no_line, "").into_owned()
 }

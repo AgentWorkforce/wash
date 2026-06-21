@@ -154,6 +154,10 @@ mod tests {
         assert_eq!(matches.len(), 1);
         let (start, end) = matches[0];
         assert_eq!(start, 0);
-        assert_eq!(end, haystack.len(), "end must extend to haystack length when trailing whitespace was trimmed during normalization");
+        assert_eq!(
+            end,
+            haystack.len(),
+            "end must extend to haystack length when trailing whitespace was trimmed during normalization"
+        );
     }
 }

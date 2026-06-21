@@ -26,7 +26,11 @@ struct Entry {
 }
 
 pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
-    run_in(&crate::profile::ledger_home().join("edit-nudge"), payload, out)
+    run_in(
+        &crate::profile::ledger_home().join("edit-nudge"),
+        payload,
+        out,
+    )
 }
 
 fn run_in(dir: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
@@ -86,10 +90,16 @@ mod tests {
     fn nudges_after_three_single_edits() {
         let tmp = TempDir::new().unwrap();
         for _ in 0..2 {
-            let s = drive(tmp.path(), json!({"session_id": "a", "tool_input": {"edits": [{}]}}));
+            let s = drive(
+                tmp.path(),
+                json!({"session_id": "a", "tool_input": {"edits": [{}]}}),
+            );
             assert!(!s.contains("systemMessage"), "should not nudge yet: {s}");
         }
-        let s = drive(tmp.path(), json!({"session_id": "a", "tool_input": {"edits": [{}]}}));
+        let s = drive(
+            tmp.path(),
+            json!({"session_id": "a", "tool_input": {"edits": [{}]}}),
+        );
         assert!(s.contains("systemMessage"), "should nudge on third: {s}");
         assert!(s.contains("relaywash__Edit"));
     }
@@ -102,7 +112,10 @@ mod tests {
                 tmp.path(),
                 json!({"session_id": "b", "tool_input": {"edits": [{}, {}, {}]}}),
             );
-            assert!(!s.contains("systemMessage"), "batched should not nudge: {s}");
+            assert!(
+                !s.contains("systemMessage"),
+                "batched should not nudge: {s}"
+            );
         }
     }
 }

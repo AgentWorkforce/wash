@@ -32,7 +32,11 @@ pub struct ToolResult {
 
 impl ToolResult {
     pub fn new(tool_name: impl Into<String>, value: Value) -> Self {
-        Self { tool_name: tool_name.into(), value, meta: None }
+        Self {
+            tool_name: tool_name.into(),
+            value,
+            meta: None,
+        }
     }
 
     pub fn with_meta(mut self, meta: Meta) -> Self {
@@ -196,7 +200,9 @@ impl McpServer {
             .iter()
             .find(|t| t.name == name)
             .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
-        let ctx = ToolContext { session_id: self.session_id.clone() };
+        let ctx = ToolContext {
+            session_id: self.session_id.clone(),
+        };
         Ok(match (tool.handler)(&args, &ctx) {
             Ok(out) => format_tool_result(&out),
             Err(e) => error_tool_result(&e.to_string()),
@@ -344,7 +350,10 @@ mod tests {
 
         let text = out["content"][0]["text"].as_str().unwrap();
         let parsed: Value = serde_json::from_str(text).unwrap();
-        assert_eq!(parsed["_meta"]["schemaVersion"], crate::meta::SCHEMA_VERSION);
+        assert_eq!(
+            parsed["_meta"]["schemaVersion"],
+            crate::meta::SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -376,20 +385,28 @@ mod tests {
             "relaywash__Boom",
             Box::new(|_, _| Err(anyhow!("kaboom detail"))),
         );
-        let out = s.call_tool(&json!({"name": "relaywash__Boom"})).expect("not a protocol error");
+        let out = s
+            .call_tool(&json!({"name": "relaywash__Boom"}))
+            .expect("not a protocol error");
         assert_eq!(out["isError"], json!(true));
         assert_eq!(out["content"][0]["text"], json!("kaboom detail"));
     }
 
     #[test]
     fn call_tool_missing_name_is_protocol_error() {
-        let s = server_with_tool("relaywash__Ok", Box::new(|_, _| Ok(ToolResult::new("x", json!({})))));
+        let s = server_with_tool(
+            "relaywash__Ok",
+            Box::new(|_, _| Ok(ToolResult::new("x", json!({})))),
+        );
         assert!(s.call_tool(&json!({})).is_err());
     }
 
     #[test]
     fn call_tool_unknown_tool_is_protocol_error() {
-        let s = server_with_tool("relaywash__Ok", Box::new(|_, _| Ok(ToolResult::new("x", json!({})))));
+        let s = server_with_tool(
+            "relaywash__Ok",
+            Box::new(|_, _| Ok(ToolResult::new("x", json!({})))),
+        );
         assert!(s.call_tool(&json!({"name": "relaywash__Nope"})).is_err());
     }
 

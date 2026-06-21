@@ -88,7 +88,11 @@ fn run(args: &Value) -> Result<ToolResult> {
     let paths: Vec<String> = args
         .get("paths")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
         .filter(|v: &Vec<String>| !v.is_empty())
         .unwrap_or_else(|| vec!["**/*".into()]);
 

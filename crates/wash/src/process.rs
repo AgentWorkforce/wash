@@ -110,8 +110,16 @@ where
     let out_buf = Arc::new(Mutex::new(Vec::new()));
     let err_buf = Arc::new(Mutex::new(Vec::new()));
     let (done_tx, done_rx) = mpsc::channel::<()>();
-    drain(child.stdout.take().expect("stdout piped"), Arc::clone(&out_buf), done_tx.clone());
-    drain(child.stderr.take().expect("stderr piped"), Arc::clone(&err_buf), done_tx);
+    drain(
+        child.stdout.take().expect("stdout piped"),
+        Arc::clone(&out_buf),
+        done_tx.clone(),
+    );
+    drain(
+        child.stderr.take().expect("stderr piped"),
+        Arc::clone(&err_buf),
+        done_tx,
+    );
 
     let deadline = Instant::now() + timeout;
     let mut timed_out = false;
@@ -245,7 +253,11 @@ mod tests {
         let c = run("sh", ["-c", "sleep 30"], &dir, Duration::from_millis(200)).expect("sh spawns");
         assert!(c.timed_out, "expected the 30s sleep to be killed");
         // The kill must happen near the deadline, nowhere near the 30s sleep.
-        assert!(t0.elapsed() < Duration::from_secs(5), "took {:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            t0.elapsed()
+        );
     }
 
     #[cfg(unix)]
@@ -260,7 +272,10 @@ mod tests {
         let t0 = Instant::now();
         let c = run("sh", ["-c", "echo started; sleep 30 &"], &dir, GENEROUS).expect("sh spawns");
         assert_eq!(c.status, Some(0));
-        assert!(!c.timed_out, "the shell exited cleanly; this is not a timeout");
+        assert!(
+            !c.timed_out,
+            "the shell exited cleanly; this is not a timeout"
+        );
         assert!(c.stdout.contains("started"), "stdout was {:?}", c.stdout);
         assert!(
             t0.elapsed() < Duration::from_secs(10),
@@ -281,6 +296,10 @@ mod tests {
         )
         .expect("sh spawns");
         assert!(c.timed_out);
-        assert!(c.stdout.contains("early"), "partial stdout was {:?}", c.stdout);
+        assert!(
+            c.stdout.contains("early"),
+            "partial stdout was {:?}",
+            c.stdout
+        );
     }
 }

@@ -82,12 +82,13 @@ pub fn ingest_transcript(payload: &Value) -> Result<usize> {
 
 /// Test-friendly variant — `home` is the equivalent of `${RELAYBURN_HOME}`.
 pub fn ingest_with(home: &Path, payload: &Value) -> Result<usize> {
-    let transcript_path = match crate::hooks::payload_field(payload, "transcript_path", "transcriptPath")
-        .and_then(|v| v.as_str())
-    {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => return Ok(0), // No transcript -> nothing to do.
-    };
+    let transcript_path =
+        match crate::hooks::payload_field(payload, "transcript_path", "transcriptPath")
+            .and_then(|v| v.as_str())
+        {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => return Ok(0), // No transcript -> nothing to do.
+        };
     if !transcript_path.exists() {
         return Ok(0);
     }
@@ -261,7 +262,11 @@ fn extract_tools(content: Option<&Value>) -> (Vec<String>, String) {
         if b.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
             continue;
         }
-        let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = b
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() {
             continue;
         }
@@ -336,8 +341,18 @@ mod tests {
     fn parse_turns_extracts_one_record_per_assistant_turn() {
         let entries = [
             json!({"type": "user", "message": {"role": "user", "content": "hi"}}),
-            assistant_entry("msg_1", "claude-opus-4-7", "2026-01-01T00:00:00Z", &["Edit"]),
-            assistant_entry("msg_2", "claude-opus-4-7", "2026-01-01T00:00:01Z", &["TestRun"]),
+            assistant_entry(
+                "msg_1",
+                "claude-opus-4-7",
+                "2026-01-01T00:00:00Z",
+                &["Edit"],
+            ),
+            assistant_entry(
+                "msg_2",
+                "claude-opus-4-7",
+                "2026-01-01T00:00:01Z",
+                &["TestRun"],
+            ),
         ];
         let transcript = entries
             .iter()
@@ -383,13 +398,8 @@ mod tests {
         let mut t = String::new();
         t.push_str("not json\n");
         t.push_str(
-            &serde_json::to_string(&assistant_entry(
-                "msg_1",
-                "claude-opus-4-7",
-                "t",
-                &["Edit"],
-            ))
-            .unwrap(),
+            &serde_json::to_string(&assistant_entry("msg_1", "claude-opus-4-7", "t", &["Edit"]))
+                .unwrap(),
         );
         t.push('\n');
         t.push_str("{\"partial\":\n"); // unterminated, will fail
@@ -472,7 +482,10 @@ mod tests {
 
         let recs = read_jsonl(&home.join(TURNS_SUBDIR).join("s2.jsonl"));
         assert_eq!(recs.len(), 3);
-        let ids: Vec<&str> = recs.iter().map(|r| r["messageId"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = recs
+            .iter()
+            .map(|r| r["messageId"].as_str().unwrap())
+            .collect();
         assert_eq!(ids, vec!["msg_1", "msg_2", "msg_3"]);
     }
 

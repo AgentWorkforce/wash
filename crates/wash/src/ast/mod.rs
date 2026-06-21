@@ -137,7 +137,10 @@ fn skip_string(bytes: &[u8], start: usize, quote: u8) -> usize {
 }
 
 fn memchr(bytes: &[u8], from: usize, target: u8) -> Option<usize> {
-    bytes[from..].iter().position(|&b| b == target).map(|p| from + p)
+    bytes[from..]
+        .iter()
+        .position(|&b| b == target)
+        .map(|p| from + p)
 }
 
 fn find_subseq(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
@@ -222,7 +225,11 @@ pub fn find_body_end(lines: &[&str], header_idx: usize) -> usize {
 }
 
 fn strip_line_comment(s: &str) -> &str {
-    if let Some(i) = s.find("//") { &s[..i] } else { s }
+    if let Some(i) = s.find("//") {
+        &s[..i]
+    } else {
+        s
+    }
 }
 
 /// Strip a trailing `# comment` (and trailing whitespace) from a Python header so one like
@@ -233,7 +240,9 @@ pub(super) fn strip_python_comment(s: &str) -> &str {
 }
 
 fn leading_ws(s: &str) -> usize {
-    s.chars().take_while(|c| c.is_whitespace() && *c != '\n').count()
+    s.chars()
+        .take_while(|c| c.is_whitespace() && *c != '\n')
+        .count()
 }
 
 #[cfg(test)]
@@ -258,12 +267,24 @@ export class Greeter {
 export type Pair = [number, number];
 "#;
         let s = extract_signatures(src, Language::TypeScript);
-        assert!(s.content.contains("import { foo } from"), "import preserved");
-        assert!(s.content.contains("export function add"), "function header preserved");
+        assert!(
+            s.content.contains("import { foo } from"),
+            "import preserved"
+        );
+        assert!(
+            s.content.contains("export function add"),
+            "function header preserved"
+        );
         assert!(s.content.contains("…"), "body elided with marker");
-        assert!(s.content.contains("export class Greeter"), "class header preserved");
+        assert!(
+            s.content.contains("export class Greeter"),
+            "class header preserved"
+        );
         assert!(s.content.contains("greet"), "method name preserved");
-        assert!(s.content.contains("export type Pair"), "type alias preserved");
+        assert!(
+            s.content.contains("export type Pair"),
+            "type alias preserved"
+        );
         // No body bytes leaked.
         assert!(!s.content.contains("const total = a + b"));
         assert!(!s.content.contains("\"hello \""));
@@ -294,7 +315,10 @@ export type Pair = [number, number];
         // regression test for the byte-range fix in tree_sitter_sig::emit_signature.
         let src = "export function add(a: number, b: number): number { return a + b; }\n";
         let s = extract_signatures(src, Language::TypeScript);
-        assert!(s.content.contains("export function add"), "header preserved");
+        assert!(
+            s.content.contains("export function add"),
+            "header preserved"
+        );
         assert!(s.content.contains("…"), "body elided with marker");
         assert!(
             !s.content.contains("return a + b"),

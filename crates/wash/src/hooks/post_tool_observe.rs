@@ -74,7 +74,10 @@ struct MetricsLine<'a> {
     baseline_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "baselineTokens")]
     baseline_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "estimatedSavedTokens")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "estimatedSavedTokens"
+    )]
     estimated_saved_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "hitCap")]
     hit_cap: Option<bool>,
@@ -128,7 +131,10 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
     // Read previous tool/args for this session, then update.
     let state_dir = home.join(STATE_SUBDIR);
     if let Err(e) = fs::create_dir_all(&state_dir) {
-        eprintln!("relaywash: observe state dir create failed ({}): {e}", state_dir.display());
+        eprintln!(
+            "relaywash: observe state dir create failed ({}): {e}",
+            state_dir.display()
+        );
     }
     let state_path = state_dir.join(format!("{session_id}.json"));
     let prev: SessionState = fs::read_to_string(&state_path)
@@ -158,9 +164,9 @@ fn run_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
                 );
             }
         }
-        Err(e) => eprintln!(
-            "relaywash: observe state serialize failed (session={session_id}): {e}"
-        ),
+        Err(e) => {
+            eprintln!("relaywash: observe state serialize failed (session={session_id}): {e}")
+        }
     }
 
     // Best-effort from here down: the observe hook is telemetry, not user-visible work.
@@ -224,7 +230,11 @@ fn append_events<T: Serialize, U: Serialize>(events_path: &Path, first: &T, seco
             return;
         }
     };
-    match fs::OpenOptions::new().create(true).append(true).open(events_path) {
+    match fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(events_path)
+    {
         Ok(mut f) => {
             if let Err(e) = writeln!(f, "{line1}") {
                 eprintln!("relaywash: observe append failed: {e}");
@@ -273,25 +283,30 @@ mod tests {
     }
 
     fn read_events(home: &Path, session_id: &str) -> Vec<Value> {
-        let path = home
-            .join(EVENTS_SUBDIR)
-            .join(format!("{session_id}.jsonl"));
+        let path = home.join(EVENTS_SUBDIR).join(format!("{session_id}.jsonl"));
         let raw = std::fs::read_to_string(&path).unwrap_or_default();
         raw.lines()
             .filter(|l| !l.is_empty())
             .map(|l| {
-                serde_json::from_str(l)
-                    .unwrap_or_else(|e| panic!("invalid observe event JSON in {path:?}: {e}\nline: {l}"))
+                serde_json::from_str(l).unwrap_or_else(|e| {
+                    panic!("invalid observe event JSON in {path:?}: {e}\nline: {l}")
+                })
             })
             .collect()
     }
 
     fn outcomes(events: &[Value]) -> Vec<&Value> {
-        events.iter().filter(|e| e["kind"] == "tool_outcome").collect()
+        events
+            .iter()
+            .filter(|e| e["kind"] == "tool_outcome")
+            .collect()
     }
 
     fn metrics(events: &[Value]) -> Vec<&Value> {
-        events.iter().filter(|e| e["kind"] == "tool_metrics").collect()
+        events
+            .iter()
+            .filter(|e| e["kind"] == "tool_metrics")
+            .collect()
     }
 
     #[test]
@@ -319,7 +334,10 @@ mod tests {
         let ev = outcomes[0];
         assert_eq!(ev["tool"], "Search");
         assert_eq!(ev["args"]["maxResults"], 50);
-        assert!(ev["args"].get("content").is_none(), "content must be redacted");
+        assert!(
+            ev["args"].get("content").is_none(),
+            "content must be redacted"
+        );
         assert!(ev["args"].get("paths").is_none(), "paths must be redacted");
         assert!(ev["resultBytes"].as_u64().unwrap() > 0);
     }
@@ -354,7 +372,12 @@ mod tests {
             tmp.path(),
         );
         let events = read_events(tmp.path(), "s3");
-        assert!(outcomes(&events)[0].get("hitCap").map(|v| v.is_null()).unwrap_or(true));
+        assert!(
+            outcomes(&events)[0]
+                .get("hitCap")
+                .map(|v| v.is_null())
+                .unwrap_or(true)
+        );
     }
 
     #[test]
@@ -400,7 +423,11 @@ mod tests {
         assert!(rb > 0);
         assert_eq!(rt, rb.div_ceil(4));
         assert!(ev.get("baselineBytes").map(|v| v.is_null()).unwrap_or(true));
-        assert!(ev.get("estimatedSavedTokens").map(|v| v.is_null()).unwrap_or(true));
+        assert!(
+            ev.get("estimatedSavedTokens")
+                .map(|v| v.is_null())
+                .unwrap_or(true)
+        );
     }
 
     #[test]
@@ -495,6 +522,9 @@ mod tests {
         let raw = serde_json::to_string(&m[0]).unwrap();
         assert!(!raw.contains("SECRET_TOKEN_abc123"));
         assert!(!raw.contains("/etc/passwd"));
-        assert!(m[0].get("args").is_none(), "metrics event has no args field");
+        assert!(
+            m[0].get("args").is_none(),
+            "metrics event has no args field"
+        );
     }
 }
