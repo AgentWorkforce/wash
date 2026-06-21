@@ -12,7 +12,10 @@ pub struct Walk {
 
 impl Walk {
     pub fn new(root: impl Into<PathBuf>, patterns: Vec<String>) -> Self {
-        Self { root: root.into(), patterns }
+        Self {
+            root: root.into(),
+            patterns,
+        }
     }
 
     /// Enumerate files under `root` that match any of the configured glob patterns.

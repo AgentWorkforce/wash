@@ -24,12 +24,31 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Changed
 
+- `relaywash__GitState` and `relaywash__GhPR` now report `baselineBytes` (the
+  sum of every git/gh subprocess call an op makes), so their savings finally
+  show up in the ledger instead of reading as zero.
+- `relaywash__Build` savings baseline no longer counts a synthetic newline (the
+  `\n` stitched between stdout and stderr is a relaywash formatting detail, not
+  vanilla output the agent would have paid for). The four process-backed tools
+  now share one `baselineBytes` definition, so their savings can't drift apart.
 - `wash` profile cache now reloads mid-session when the profile file changes,
   so adaptive defaults pick up new writes without a CLI restart. A broken
   per-repo profile falls through to the global profile instead of masking it.
 
 ### Fixed
 
+- `relaywash__Build`, `relaywash__TestRun`, `relaywash__GitState`, and
+  `relaywash__GhPR` subprocesses are now killed after a per-tool timeout (15m
+  builds/tests, 60s git, 120s gh) instead of hanging the single-threaded MCP
+  server; Build/TestRun timeouts return the partial output captured before the
+  kill, git/gh timeouts surface a clear error.
+- `relaywash__TestRun`: `getFailureLog` now reads the most recent *test* log instead
+  of whichever log sorted last by filename — a `build`/other-tool log (or, lexically,
+  any later-prefixed log) could previously shadow the test log and make the lookup miss.
+- Reproducible builds: `Cargo.lock` is now committed (it was ignored as if it
+  were build output), pinning `relayburn-sdk` at a version with the synchronous
+  `ingest` the Stop hook calls. The now-unused direct `tokio` runtime dependency
+  is dropped.
 - `relaywash__GhPR`: `comments` op resolves `owner/repo` from the git remote
   when the `repo` arg is omitted, replacing the broken literal-placeholder
   fallback that produced 404s.

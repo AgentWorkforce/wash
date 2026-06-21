@@ -11,10 +11,8 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::bench::report::{
-    CallRecord, ExpectationOutcome, RunReport, SuiteReport, TaskReport,
-};
-use crate::mcp::{Tool, ToolContext, format_tool_result};
+use crate::bench::report::{CallRecord, ExpectationOutcome, RunReport, SuiteReport, TaskReport};
+use crate::mcp::{Tool, ToolContext, error_tool_result, format_tool_result};
 use crate::meta::SCHEMA_VERSION;
 use crate::tokens::estimate_tokens;
 use crate::tools;
@@ -112,10 +110,7 @@ enum ExpectationSpec {
     },
     /// Total response bytes across all calls in the task stay below this limit.
     /// Useful as a soft budget: a baseline-only tripwire that flags growth.
-    MaxTotalBytes {
-        name: String,
-        max: u64,
-    },
+    MaxTotalBytes { name: String, max: u64 },
 }
 
 fn default_top_n() -> usize {
@@ -140,7 +135,11 @@ pub fn run_suite(opts: &RunOptions) -> Result<SuiteReport> {
     let mut totals_for_repeats: HashSet<String> = HashSet::new();
 
     for dir in task_dirs {
-        let name = dir.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
         if !want.is_empty() && !want.contains(name.as_str()) {
             continue;
         }
@@ -178,8 +177,8 @@ pub fn run_task(
     let exp_path = task_dir.join("expectations.json");
     let raw = std::fs::read_to_string(&exp_path)
         .with_context(|| format!("reading {}", exp_path.display()))?;
-    let spec: ExpectationsFile = serde_json::from_str(&raw)
-        .with_context(|| format!("parsing {}", exp_path.display()))?;
+    let spec: ExpectationsFile =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", exp_path.display()))?;
 
     if fast_only && !spec.fast_subset {
         return Ok(None);
@@ -212,7 +211,9 @@ pub fn run_task(
 
     // Drive the steps. Session id is fixed so the per-process state cache (Read's
     // mtime cache, last-searched-symbol) is consistent across runs of the same task.
-    let ctx = ToolContext { session_id: Some(format!("bench-{}", spec.name)) };
+    let ctx = ToolContext {
+        session_id: Some(format!("bench-{}", spec.name)),
+    };
     // Reset the global state between tasks so an earlier task's read cache doesn't
     // make a later task's first Read return empty content.
     #[cfg(test)]
@@ -274,14 +275,7 @@ pub fn run_task(
                     .unwrap_or(Value::Null);
                 (formatted, structured, false)
             }
-            Err(e) => (
-                json!({
-                    "content": [{"type": "text", "text": e.to_string()}],
-                    "isError": true,
-                }),
-                Value::Null,
-                true,
-            ),
+            Err(e) => (error_tool_result(&e.to_string()), Value::Null, true),
         };
 
         let response_bytes = extract_response_bytes(&formatted);
@@ -330,9 +324,7 @@ pub fn run_task(
 fn extract_response_bytes(formatted: &Value) -> u64 {
     if let Some(n) = formatted
         .get("structuredContent")
-        .and_then(|v| v.get("_meta"))
-        .and_then(|v| v.get("responseBytes"))
-        .and_then(|v| v.as_u64())
+        .and_then(crate::meta::Meta::response_bytes_of)
     {
         return n;
     }
@@ -349,15 +341,16 @@ fn extract_response_bytes(formatted: &Value) -> u64 {
 fn extract_baseline_bytes(formatted: &Value) -> Option<u64> {
     formatted
         .get("structuredContent")
-        .and_then(|v| v.get("_meta"))
-        .and_then(|v| v.get("baselineBytes"))
-        .and_then(|v| v.as_u64())
+        .and_then(crate::meta::Meta::baseline_bytes_of)
 }
 
 /// Heuristic cap detection. Mirrors the actual flags the tools emit so the
 /// signal stays accurate as those tools grow more cap surfaces.
 fn detect_cap_hit(structured: &Value) -> bool {
-    structured.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false)
+    structured
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
         || structured
             .get("skippedTruncated")
             .and_then(|v| v.as_bool())
@@ -382,7 +375,10 @@ fn canonical_call_key(tool: &str, args: &Value) -> String {
         }
         other => other.clone(),
     };
-    format!("{tool}::{}", serde_json::to_string(&stripped).unwrap_or_default())
+    format!(
+        "{tool}::{}",
+        serde_json::to_string(&stripped).unwrap_or_default()
+    )
 }
 
 fn evaluate_expectation(
@@ -391,7 +387,12 @@ fn evaluate_expectation(
     calls: &[CallRecord],
 ) -> ExpectationOutcome {
     match spec {
-        ExpectationSpec::FileInTopResults { name, step, files, top_n } => {
+        ExpectationSpec::FileInTopResults {
+            name,
+            step,
+            files,
+            top_n,
+        } => {
             let out = outputs.iter().find(|(s, _)| s == step);
             let Some((_, val)) = out else {
                 return fail(name, format!("step {step} not found in run"));
@@ -410,9 +411,7 @@ fn evaluate_expectation(
             } else {
                 fail(
                     name,
-                    format!(
-                        "none of {files:?} appeared in top {top_n}: got {top:?}",
-                    ),
+                    format!("none of {files:?} appeared in top {top_n}: got {top:?}",),
                 )
             }
         }
@@ -490,11 +489,19 @@ fn evaluate_expectation(
 }
 
 fn pass(name: &str) -> ExpectationOutcome {
-    ExpectationOutcome { name: name.into(), passed: true, detail: String::new() }
+    ExpectationOutcome {
+        name: name.into(),
+        passed: true,
+        detail: String::new(),
+    }
 }
 
 fn fail(name: &str, detail: impl Into<String>) -> ExpectationOutcome {
-    ExpectationOutcome { name: name.into(), passed: false, detail: detail.into() }
+    ExpectationOutcome {
+        name: name.into(),
+        passed: false,
+        detail: detail.into(),
+    }
 }
 
 /// Re-export so callers can sanity-check the tool meta version they're recording
@@ -548,7 +555,10 @@ mod tests {
         let tools = crate::tools::all();
         let scaffold = root.join("fixtures/bench/explore-subsystem");
         let task = run_task(&root, &scaffold, &tools, true).expect("runner succeeds");
-        assert!(task.is_none(), "scaffold task should be filtered out of --fast");
+        assert!(
+            task.is_none(),
+            "scaffold task should be filtered out of --fast"
+        );
     }
 
     #[test]

@@ -4,12 +4,16 @@ use anyhow::{Result, anyhow, bail};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
-use std::process::Command;
+use std::time::Duration;
 
 use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
+use crate::process;
 
 const DESCRIPTION: &str = "Structured PR access (replaces gh pr view/list/diff and gh api repos/.../pulls). Returns a small subset of fields by default; use `fields` to expand. Bodies and diff hunks are truncated.";
+
+/// `gh` makes network calls; 120s tolerates a slow API round-trip but bounds a
+/// hang (e.g. an interactive auth prompt) that would otherwise stall the server.
+const GH_TIMEOUT: Duration = Duration::from_secs(120);
 
 const VIEW_DEFAULT_FIELDS: &[&str] = &[
     "number",
@@ -56,11 +60,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("missing op"))?
         .to_string();
-    let cwd: PathBuf = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let cwd: PathBuf = super::cwd_arg(args);
 
     let replaces = match op.as_str() {
         "view" => "Bash:gh-pr-view",
@@ -70,31 +70,42 @@ fn run(args: &Value) -> Result<ToolResult> {
         other => bail!("unknown op: {other}"),
     };
 
+    let mut bytes = 0u64;
     let value = match op.as_str() {
-        "view" => view(&cwd, args)?,
-        "list" => list(&cwd, args)?,
-        "diff" => diff(&cwd, args)?,
-        "comments" => comments(&cwd, args)?,
+        "view" => view(&cwd, args, &mut bytes)?,
+        "list" => list(&cwd, args, &mut bytes)?,
+        "diff" => diff(&cwd, args, &mut bytes)?,
+        "comments" => comments(&cwd, args, &mut bytes)?,
         _ => unreachable!(),
     };
-    Ok(ToolResult::new("relaywash__GhPR", value)
-        .with_meta(Meta::new([replaces.to_string()], 1)))
+    super::ok_with_meta("relaywash__GhPR", replaces, value, Some(bytes))
 }
 
-fn gh(cwd: &std::path::Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("gh").args(args).current_dir(cwd).output()?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(if !out.stderr.is_empty() {
+/// Run one `gh` invocation, accumulating the raw bytes it produced into `bytes`. The
+/// `comments` op fans out into two API calls; the baseline is the sum (see
+/// `process::subprocess_baseline`).
+fn gh(cwd: &std::path::Path, args: &[&str], bytes: &mut u64) -> Result<String> {
+    let out = process::run("gh", args, cwd, GH_TIMEOUT)?;
+    *bytes += out.baseline;
+    if out.timed_out {
+        return Err(anyhow!(
+            "gh {} timed out after {}s",
+            args.join(" "),
+            GH_TIMEOUT.as_secs()
+        ));
+    }
+    if out.status != Some(0) {
+        let err = if !out.stderr.is_empty() {
             &out.stderr
         } else {
             &out.stdout
-        });
+        };
         return Err(anyhow!("gh {} failed: {}", args.join(" "), err.trim()));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(out.stdout)
 }
 
-fn view(cwd: &std::path::Path, args: &Value) -> Result<Value> {
+fn view(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Value> {
     let number = args
         .get("number")
         .and_then(|v| v.as_u64())
@@ -102,7 +113,11 @@ fn view(cwd: &std::path::Path, args: &Value) -> Result<Value> {
     let custom_fields: Vec<String> = args
         .get("fields")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let fields: Vec<&str> = if custom_fields.is_empty() {
         VIEW_DEFAULT_FIELDS.to_vec()
@@ -117,7 +132,7 @@ fn view(cwd: &std::path::Path, args: &Value) -> Result<Value> {
         cmd.push("--repo");
         cmd.push(r);
     }
-    let raw = gh(cwd, &cmd)?;
+    let raw = gh(cwd, &cmd, bytes)?;
     let mut parsed: Value = serde_json::from_str(&raw)?;
     if let Some(obj) = parsed.as_object_mut() {
         if let Some(author) = obj.get_mut("author") {
@@ -125,11 +140,17 @@ fn view(cwd: &std::path::Path, args: &Value) -> Result<Value> {
                 *author = login;
             }
         }
-        if let Some(body) = obj.get_mut("body").and_then(|v| v.as_str().map(String::from)) {
+        if let Some(body) = obj
+            .get_mut("body")
+            .and_then(|v| v.as_str().map(String::from))
+        {
             if body.chars().count() > BODY_TRUNCATE {
                 obj.insert(
                     "body".into(),
-                    Value::String(format!("{}\n... (truncated)", truncate_chars(&body, BODY_TRUNCATE))),
+                    Value::String(format!(
+                        "{}\n... (truncated)",
+                        truncate_chars(&body, BODY_TRUNCATE)
+                    )),
                 );
             }
         }
@@ -137,7 +158,7 @@ fn view(cwd: &std::path::Path, args: &Value) -> Result<Value> {
     Ok(parsed)
 }
 
-fn list(cwd: &std::path::Path, args: &Value) -> Result<Value> {
+fn list(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Value> {
     let fields_csv = LIST_FIELDS.join(",");
     let mut cmd: Vec<&str> = vec!["pr", "list", "--json", &fields_csv, "--limit", "30"];
     let repo = args.get("repo").and_then(|v| v.as_str()).map(String::from);
@@ -145,7 +166,7 @@ fn list(cwd: &std::path::Path, args: &Value) -> Result<Value> {
         cmd.push("--repo");
         cmd.push(r);
     }
-    let raw = gh(cwd, &cmd)?;
+    let raw = gh(cwd, &cmd, bytes)?;
     let parsed: Value = serde_json::from_str(&raw)?;
     let arr = parsed
         .as_array()
@@ -177,16 +198,12 @@ struct DiffFile {
     truncated: bool,
 }
 
-fn diff(cwd: &std::path::Path, args: &Value) -> Result<Value> {
+fn diff(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Value> {
     let number = args
         .get("number")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow!("GhPR diff requires `number`"))?;
-    let max_lines = args
-        .get("maxDiffLines")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_MAX_DIFF_LINES);
+    let max_lines = super::usize_arg(args, "maxDiffLines", DEFAULT_MAX_DIFF_LINES);
     let n = number.to_string();
     let mut cmd: Vec<&str> = vec!["pr", "diff", &n];
     let repo = args.get("repo").and_then(|v| v.as_str()).map(String::from);
@@ -194,7 +211,7 @@ fn diff(cwd: &std::path::Path, args: &Value) -> Result<Value> {
         cmd.push("--repo");
         cmd.push(r);
     }
-    let raw = gh(cwd, &cmd)?;
+    let raw = gh(cwd, &cmd, bytes)?;
     let files = parse_per_file_diffs(&raw, max_lines);
     Ok(json!({
         "number": number,
@@ -291,16 +308,12 @@ fn truncate_chars(s: &str, limit: usize) -> String {
     s.chars().take(limit).collect()
 }
 
-fn comments(cwd: &std::path::Path, args: &Value) -> Result<Value> {
+fn comments(cwd: &std::path::Path, args: &Value, bytes: &mut u64) -> Result<Value> {
     let number = args
         .get("number")
         .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow!("GhPR comments requires `number`"))?;
-    let max = args
-        .get("maxComments")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_MAX_COMMENTS);
+    let max = super::usize_arg(args, "maxComments", DEFAULT_MAX_COMMENTS);
     let repo = args.get("repo").and_then(|v| v.as_str()).map(String::from);
     // `gh api` takes a literal URL — unlike `gh pr <op>`, it doesn't substitute
     // `{owner}/{repo}` from cwd. Resolve it ourselves so omitting `repo` behaves the
@@ -315,8 +328,8 @@ fn comments(cwd: &std::path::Path, args: &Value) -> Result<Value> {
     };
     let review_url = format!("repos/{repo_seg}/pulls/{number}/comments");
     let issue_url = format!("repos/{repo_seg}/issues/{number}/comments");
-    let review_raw = gh(cwd, &["api", &review_url])?;
-    let issue_raw = gh(cwd, &["api", &issue_url])?;
+    let review_raw = gh(cwd, &["api", &review_url], bytes)?;
+    let issue_raw = gh(cwd, &["api", &issue_url], bytes)?;
     let review: Value = serde_json::from_str(&review_raw)?;
     let issues: Value = serde_json::from_str(&issue_raw)?;
     let trim = |s: &str| -> String {
@@ -404,7 +417,7 @@ mod tests {
         // call with a literal `{owner}/{repo}` segment.
         let tmp = tempfile::TempDir::new().unwrap();
         let args = json!({"op":"comments","number":1});
-        let err = comments(tmp.path(), &args).unwrap_err();
+        let err = comments(tmp.path(), &args, &mut 0).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("repo"),

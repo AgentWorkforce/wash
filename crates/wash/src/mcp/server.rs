@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use serde_json::{Map, Value, json};
 use std::cell::Cell;
 use std::io::{Read, Write};
@@ -32,7 +32,11 @@ pub struct ToolResult {
 
 impl ToolResult {
     pub fn new(tool_name: impl Into<String>, value: Value) -> Self {
-        Self { tool_name: tool_name.into(), value, meta: None }
+        Self {
+            tool_name: tool_name.into(),
+            value,
+            meta: None,
+        }
     }
 
     pub fn with_meta(mut self, meta: Meta) -> Self {
@@ -85,8 +89,13 @@ impl McpServer {
             buf.extend_from_slice(&chunk[..n]);
 
             while let Some(msg_bytes) = take_framed_message(&mut buf) {
-                let body = String::from_utf8(msg_bytes)
-                    .context("MCP frame body is not valid UTF-8")?;
+                // A corrupt frame (bad UTF-8, or unparseable JSON below) is skipped, not
+                // fatal: this is a long-lived stdio server and one bad frame must not take
+                // down every subsequent valid request. Mirrors the header-recovery in
+                // `take_framed_message`.
+                let Ok(body) = String::from_utf8(msg_bytes) else {
+                    continue;
+                };
                 let parsed: Value = match serde_json::from_str(&body) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -161,31 +170,7 @@ impl McpServer {
                     .collect();
                 Ok(Some(json!({"tools": arr})))
             }
-            "tools/call" => {
-                let name = params
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("tools/call: missing name"))?;
-                let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                let tool = self
-                    .tools
-                    .iter()
-                    .find(|t| t.name == name)
-                    .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
-                let ctx = ToolContext { session_id: self.session_id.clone() };
-                // Per the MCP spec, JSON-RPC `error` is reserved for protocol/transport
-                // failures (unknown method, malformed request, missing tool, etc.). Tool
-                // *execution* failures must come back as a normal `result` with
-                // `isError: true` so the model can read the failure text and react,
-                // rather than seeing a generic "tool failed" with no detail.
-                match (tool.handler)(&args, &ctx) {
-                    Ok(out) => Ok(Some(format_tool_result(&out))),
-                    Err(e) => Ok(Some(json!({
-                        "content": [{"type": "text", "text": e.to_string()}],
-                        "isError": true,
-                    }))),
-                }
-            }
+            "tools/call" => self.call_tool(params).map(Some),
             "ping" => Ok(Some(json!({}))),
             "shutdown" | "exit" => {
                 self.shutdown.set(true);
@@ -194,6 +179,46 @@ impl McpServer {
             _ => Err(anyhow!("Method not implemented: {method}")),
         }
     }
+
+    /// Execute a `tools/call` and return its JSON-RPC `result` value.
+    ///
+    /// The MCP spec splits two kinds of failure, and this method is where that policy
+    /// lives: a *protocol* failure (missing `name`, unknown tool) returns `Err`, which
+    /// the caller turns into a JSON-RPC `error`; a tool *execution* failure is NOT an
+    /// `Err` — it comes back as a normal result with `isError: true` so the model can
+    /// read the failure text and react, rather than seeing a generic "tool failed".
+    /// Kept separate from `dispatch` so this spec-sensitive contract is unit-testable
+    /// without driving the full stdio protocol.
+    fn call_tool(&self, params: &Value) -> Result<Value> {
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("tools/call: missing name"))?;
+        let args = params.get("arguments").cloned().unwrap_or(json!({}));
+        let tool = self
+            .tools
+            .iter()
+            .find(|t| t.name == name)
+            .ok_or_else(|| anyhow!("Unknown tool: {name}"))?;
+        let ctx = ToolContext {
+            session_id: self.session_id.clone(),
+        };
+        Ok(match (tool.handler)(&args, &ctx) {
+            Ok(out) => format_tool_result(&out),
+            Err(e) => error_tool_result(&e.to_string()),
+        })
+    }
+}
+
+/// The wire shape for a *tool execution* failure: a normal `result` carrying the error
+/// text with `isError: true` (see the `tools/call` handler for why this is not a JSON-RPC
+/// error). Defined once so the bench harness, which replays tool calls outside the server,
+/// cannot drift from what the live server actually emits.
+pub fn error_tool_result(message: &str) -> Value {
+    json!({
+        "content": [{"type": "text", "text": message}],
+        "isError": true,
+    })
 }
 
 pub fn format_tool_result(r: &ToolResult) -> Value {
@@ -250,14 +275,13 @@ fn send(writer: &mut impl Write, payload: &Value) -> Result<()> {
 /// would stay at the front of the buffer forever and wedge the parser on subsequent reads.
 fn take_framed_message(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
     let header_end = find_subseq(buf, b"\r\n\r\n")?;
-    let drop_header = || -> Option<Vec<u8>> { None };
     let Ok(header) = std::str::from_utf8(&buf[..header_end]) else {
         buf.drain(..header_end + 4);
-        return drop_header();
+        return None;
     };
     let Some(len) = parse_content_length(header) else {
         buf.drain(..header_end + 4);
-        return drop_header();
+        return None;
     };
     let start = header_end + 4;
     if buf.len() < start + len {
@@ -326,7 +350,10 @@ mod tests {
 
         let text = out["content"][0]["text"].as_str().unwrap();
         let parsed: Value = serde_json::from_str(text).unwrap();
-        assert_eq!(parsed["_meta"]["schemaVersion"], crate::meta::SCHEMA_VERSION);
+        assert_eq!(
+            parsed["_meta"]["schemaVersion"],
+            crate::meta::SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -337,6 +364,61 @@ mod tests {
         let structured = &out["structuredContent"];
         assert_eq!(structured["data"], json!(["a", "b"]));
         assert!(structured["_meta"].is_object());
+    }
+
+    fn server_with_tool(name: &str, handler: ToolHandler) -> McpServer {
+        let mut s = McpServer::new("test", "0");
+        s.register(Tool {
+            name: name.into(),
+            description: "t".into(),
+            input_schema: json!({}),
+            handler,
+        });
+        s
+    }
+
+    #[test]
+    fn call_tool_execution_error_becomes_is_error_result() {
+        // A handler returning Err is a tool *execution* failure: it must come back as a
+        // normal result with isError:true, NOT as a JSON-RPC error (Err from call_tool).
+        let s = server_with_tool(
+            "relaywash__Boom",
+            Box::new(|_, _| Err(anyhow!("kaboom detail"))),
+        );
+        let out = s
+            .call_tool(&json!({"name": "relaywash__Boom"}))
+            .expect("not a protocol error");
+        assert_eq!(out["isError"], json!(true));
+        assert_eq!(out["content"][0]["text"], json!("kaboom detail"));
+    }
+
+    #[test]
+    fn call_tool_missing_name_is_protocol_error() {
+        let s = server_with_tool(
+            "relaywash__Ok",
+            Box::new(|_, _| Ok(ToolResult::new("x", json!({})))),
+        );
+        assert!(s.call_tool(&json!({})).is_err());
+    }
+
+    #[test]
+    fn call_tool_unknown_tool_is_protocol_error() {
+        let s = server_with_tool(
+            "relaywash__Ok",
+            Box::new(|_, _| Ok(ToolResult::new("x", json!({})))),
+        );
+        assert!(s.call_tool(&json!({"name": "relaywash__Nope"})).is_err());
+    }
+
+    #[test]
+    fn call_tool_success_returns_formatted_result() {
+        let s = server_with_tool(
+            "relaywash__Ok",
+            Box::new(|_, _| Ok(ToolResult::new("relaywash__Ok", json!({"v": 1})))),
+        );
+        let out = s.call_tool(&json!({"name": "relaywash__Ok"})).unwrap();
+        assert_eq!(out["structuredContent"]["v"], json!(1));
+        assert!(out.get("isError").is_none());
     }
 
     #[test]

@@ -4,12 +4,13 @@ use anyhow::Result;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::write_continue;
+use crate::profile::ledger_home;
 
 pub fn run(_payload: &Value, out: &mut impl Write) -> Result<()> {
-    ensure_dir(&ledger_home_default());
+    ensure_dir(&ledger_home());
     write_continue(out)
 }
 
@@ -17,16 +18,6 @@ fn ensure_dir(dir: &Path) {
     if let Err(e) = fs::create_dir_all(dir) {
         eprintln!("relaywash: cannot create ledger dir {}: {e}", dir.display());
     }
-}
-
-fn ledger_home_default() -> PathBuf {
-    if let Ok(s) = std::env::var("RELAYBURN_HOME") {
-        return PathBuf::from(s);
-    }
-    if let Some(h) = std::env::var_os("HOME") {
-        return PathBuf::from(h).join(".relayburn");
-    }
-    PathBuf::from(".relayburn")
 }
 
 #[cfg(test)]

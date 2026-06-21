@@ -6,6 +6,7 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'rust-toolchain.toml'
       - 'bin/**'
       - 'scripts/**'
       - 'fixtures/**'
@@ -19,12 +20,28 @@ permissions:
   contents: read
   pull-requests: write
 
+# The Rust toolchain version is pinned in rust-toolchain.toml (the single source
+# of truth, also used by every developer's rustup). The jobs below install that
+# same version so CI formatting/builds can't drift from local. Bump the version
+# in rust-toolchain.toml and here together, in a commit that also reformats.
 jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - name: cargo fmt --check
+        # Fails the build on any unformatted file. Run `cargo fmt --all` locally
+        # to fix; the pinned toolchain guarantees identical output here and there.
+        run: cargo fmt --all --check
+
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - name: cargo build
         run: cargo build --release

@@ -82,21 +82,18 @@ pub fn ingest_transcript(payload: &Value) -> Result<usize> {
 
 /// Test-friendly variant — `home` is the equivalent of `${RELAYBURN_HOME}`.
 pub fn ingest_with(home: &Path, payload: &Value) -> Result<usize> {
-    let transcript_path = match payload
-        .get("transcript_path")
-        .or_else(|| payload.get("transcriptPath"))
-        .and_then(|v| v.as_str())
-    {
-        Some(p) if !p.is_empty() => PathBuf::from(p),
-        _ => return Ok(0), // No transcript -> nothing to do.
-    };
+    let transcript_path =
+        match crate::hooks::payload_field(payload, "transcript_path", "transcriptPath")
+            .and_then(|v| v.as_str())
+        {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => return Ok(0), // No transcript -> nothing to do.
+        };
     if !transcript_path.exists() {
         return Ok(0);
     }
 
-    let raw_session = payload
-        .get("session_id")
-        .or_else(|| payload.get("sessionId"))
+    let raw_session = crate::hooks::payload_field(payload, "session_id", "sessionId")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     let session_id = sanitize_session_id(raw_session);
@@ -178,23 +175,13 @@ pub fn ingest_with(home: &Path, payload: &Value) -> Result<usize> {
 /// parsed as JSON are skipped silently — the transcript is a streaming format
 /// that may have partial trailing lines.
 pub fn parse_turns(transcript: &str, session_id: &str, project_key: &str) -> Vec<TurnRecord> {
-    let mut out = Vec::new();
-    for line in transcript.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(entry) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if entry.get("type").and_then(|v| v.as_str()) != Some("assistant") {
-            continue;
-        }
-        let Some(rec) = turn_from_entry(&entry, session_id, project_key) else {
-            continue;
-        };
-        out.push(rec);
-    }
-    out
+    // Malformed lines are skipped silently — a streaming transcript may end mid-line.
+    // (`crate::transcript` is fully qualified because the `transcript` param shadows it.)
+    crate::transcript::parse_lines(transcript, |_| {})
+        .iter()
+        .filter(|entry| entry.get("type").and_then(|v| v.as_str()) == Some("assistant"))
+        .filter_map(|entry| turn_from_entry(entry, session_id, project_key))
+        .collect()
 }
 
 fn turn_from_entry(entry: &Value, session_id: &str, project_key: &str) -> Option<TurnRecord> {
@@ -275,16 +262,17 @@ fn extract_tools(content: Option<&Value>) -> (Vec<String>, String) {
         if b.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
             continue;
         }
-        let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let name = b
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() {
             continue;
         }
         // Bash command body powers the categorizer's text heuristics. Only the
         // command string is read; nothing is persisted.
-        let canonical = name
-            .strip_prefix("mcp__relaywash__")
-            .or_else(|| name.strip_prefix("relaywash__"))
-            .unwrap_or(&name);
+        let canonical = crate::hooks::bare_relaywash_name(&name);
         if canonical == "Bash" {
             if let Some(cmd) = b
                 .get("input")
@@ -353,8 +341,18 @@ mod tests {
     fn parse_turns_extracts_one_record_per_assistant_turn() {
         let entries = [
             json!({"type": "user", "message": {"role": "user", "content": "hi"}}),
-            assistant_entry("msg_1", "claude-opus-4-7", "2026-01-01T00:00:00Z", &["Edit"]),
-            assistant_entry("msg_2", "claude-opus-4-7", "2026-01-01T00:00:01Z", &["TestRun"]),
+            assistant_entry(
+                "msg_1",
+                "claude-opus-4-7",
+                "2026-01-01T00:00:00Z",
+                &["Edit"],
+            ),
+            assistant_entry(
+                "msg_2",
+                "claude-opus-4-7",
+                "2026-01-01T00:00:01Z",
+                &["TestRun"],
+            ),
         ];
         let transcript = entries
             .iter()
@@ -400,13 +398,8 @@ mod tests {
         let mut t = String::new();
         t.push_str("not json\n");
         t.push_str(
-            &serde_json::to_string(&assistant_entry(
-                "msg_1",
-                "claude-opus-4-7",
-                "t",
-                &["Edit"],
-            ))
-            .unwrap(),
+            &serde_json::to_string(&assistant_entry("msg_1", "claude-opus-4-7", "t", &["Edit"]))
+                .unwrap(),
         );
         t.push('\n');
         t.push_str("{\"partial\":\n"); // unterminated, will fail
@@ -425,11 +418,7 @@ mod tests {
     }
 
     fn read_jsonl(path: &Path) -> Vec<Value> {
-        let raw = fs::read_to_string(path).unwrap_or_default();
-        raw.lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| serde_json::from_str(l).unwrap())
-            .collect()
+        crate::transcript::read_file(path).unwrap_or_default()
     }
 
     #[test]
@@ -493,7 +482,10 @@ mod tests {
 
         let recs = read_jsonl(&home.join(TURNS_SUBDIR).join("s2.jsonl"));
         assert_eq!(recs.len(), 3);
-        let ids: Vec<&str> = recs.iter().map(|r| r["messageId"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = recs
+            .iter()
+            .map(|r| r["messageId"].as_str().unwrap())
+            .collect();
         assert_eq!(ids, vec!["msg_1", "msg_2", "msg_3"]);
     }
 

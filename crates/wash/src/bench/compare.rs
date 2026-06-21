@@ -89,11 +89,7 @@ pub enum TaskDeltaStatus {
     OnlyAfter,
 }
 
-pub fn compare(
-    before: &SuiteReport,
-    after: &SuiteReport,
-    opts: &CompareOptions,
-) -> CompareOutcome {
+pub fn compare(before: &SuiteReport, after: &SuiteReport, opts: &CompareOptions) -> CompareOutcome {
     let mut regressions: Vec<String> = Vec::new();
     let mut deltas: Vec<TaskDelta> = Vec::new();
 
@@ -182,7 +178,11 @@ pub fn compare(
         ));
     }
 
-    CompareOutcome { task_deltas: deltas, suite_delta, regressions }
+    CompareOutcome {
+        task_deltas: deltas,
+        suite_delta,
+        regressions,
+    }
 }
 
 fn task_delta(before: &TaskReport, after: &TaskReport) -> TaskDelta {
@@ -198,10 +198,8 @@ fn task_delta(before: &TaskReport, after: &TaskReport) -> TaskDelta {
         .filter(|e| !e.passed)
         .map(|e| e.name.clone())
         .collect();
-    let newly_failing: Vec<String> =
-        after_failing.difference(&before_failing).cloned().collect();
-    let newly_passing: Vec<String> =
-        before_failing.difference(&after_failing).cloned().collect();
+    let newly_failing: Vec<String> = after_failing.difference(&before_failing).cloned().collect();
+    let newly_passing: Vec<String> = before_failing.difference(&after_failing).cloned().collect();
 
     TaskDelta {
         name: after.name.clone(),
@@ -348,13 +346,14 @@ mod tests {
             passed: true,
             detail: String::new(),
         }];
-        let before = suite(
-            "before",
-            vec![task("t1", 1000, 2, exps.clone(), false)],
-        );
+        let before = suite("before", vec![task("t1", 1000, 2, exps.clone(), false)]);
         let after = suite("after", vec![task("t1", 1000, 2, exps, false)]);
         let outcome = compare(&before, &after, &CompareOptions::default());
-        assert!(outcome.regressions.is_empty(), "got: {:?}", outcome.regressions);
+        assert!(
+            outcome.regressions.is_empty(),
+            "got: {:?}",
+            outcome.regressions
+        );
         assert_eq!(outcome.suite_delta.delta_bytes, 0);
         assert_eq!(outcome.suite_delta.bytes_growth, 0.0);
     }
@@ -366,14 +365,15 @@ mod tests {
             passed: true,
             detail: String::new(),
         }];
-        let before = suite(
-            "before",
-            vec![task("t1", 1000, 2, exps.clone(), false)],
-        );
+        let before = suite("before", vec![task("t1", 1000, 2, exps.clone(), false)]);
         // 5 % growth, default threshold is 10 %.
         let after = suite("after", vec![task("t1", 1050, 2, exps, false)]);
         let outcome = compare(&before, &after, &CompareOptions::default());
-        assert!(outcome.regressions.is_empty(), "got: {:?}", outcome.regressions);
+        assert!(
+            outcome.regressions.is_empty(),
+            "got: {:?}",
+            outcome.regressions
+        );
         assert_eq!(outcome.suite_delta.delta_bytes, 50);
         assert!((outcome.suite_delta.bytes_growth - 0.05).abs() < 1e-9);
     }
@@ -385,10 +385,7 @@ mod tests {
             passed: true,
             detail: String::new(),
         }];
-        let before = suite(
-            "before",
-            vec![task("t1", 1000, 2, exps.clone(), false)],
-        );
+        let before = suite("before", vec![task("t1", 1000, 2, exps.clone(), false)]);
         // 50 % growth.
         let after = suite("after", vec![task("t1", 1500, 2, exps, false)]);
         let outcome = compare(&before, &after, &CompareOptions::default());
@@ -429,14 +426,14 @@ mod tests {
             passed: true,
             detail: String::new(),
         }];
-        let before = suite(
-            "before",
-            vec![task("t1", 1000, 2, exps.clone(), false)],
-        );
+        let before = suite("before", vec![task("t1", 1000, 2, exps.clone(), false)]);
         let after = suite("after", vec![task("t1", 1000, 2, exps, true)]);
         let outcome = compare(&before, &after, &CompareOptions::default());
         assert!(
-            outcome.regressions.iter().any(|r| r.contains("newly hit a cap")),
+            outcome
+                .regressions
+                .iter()
+                .any(|r| r.contains("newly hit a cap")),
             "got: {:?}",
             outcome.regressions
         );
@@ -459,7 +456,10 @@ mod tests {
         let after = suite("after", vec![task("t1", 1000, 2, exps, false)]);
         let outcome = compare(&before, &after, &CompareOptions::default());
         assert!(
-            outcome.regressions.iter().any(|r| r.contains("disappeared")),
+            outcome
+                .regressions
+                .iter()
+                .any(|r| r.contains("disappeared")),
             "got: {:?}",
             outcome.regressions
         );
@@ -526,14 +526,14 @@ mod tests {
             passed: true,
             detail: String::new(),
         }];
-        let before = suite(
-            "before",
-            vec![task("t1", 1000, 2, exps.clone(), false)],
-        );
+        let before = suite("before", vec![task("t1", 1000, 2, exps.clone(), false)]);
         let after = suite("after", vec![task("t1", 1000, 3, exps, false)]);
         let outcome = compare(&before, &after, &CompareOptions::default());
         assert!(
-            outcome.regressions.iter().any(|r| r.contains("call count grew")),
+            outcome
+                .regressions
+                .iter()
+                .any(|r| r.contains("call count grew")),
             "got: {:?}",
             outcome.regressions
         );
@@ -546,10 +546,7 @@ mod tests {
             passed: true,
             detail: String::new(),
         }];
-        let before = suite(
-            "before",
-            vec![task("t1", 1000, 2, exps.clone(), false)],
-        );
+        let before = suite("before", vec![task("t1", 1000, 2, exps.clone(), false)]);
         let after = suite("after", vec![task("t1", 2000, 4, exps, false)]);
         let opts = CompareOptions {
             max_bytes_growth: 2.0,
@@ -558,6 +555,10 @@ mod tests {
             fail_on_new_cap_hit: true,
         };
         let outcome = compare(&before, &after, &opts);
-        assert!(outcome.regressions.is_empty(), "got: {:?}", outcome.regressions);
+        assert!(
+            outcome.regressions.is_empty(),
+            "got: {:?}",
+            outcome.regressions
+        );
     }
 }

@@ -2,35 +2,14 @@
 //! verbatim; we only normalize when locating where to splice.
 
 /// Returns the normalized form of `s` for matching.
+///
+/// This is exactly `normalize_with_map(s).0`: the needle path doesn't need the
+/// back-map, but it MUST normalize by the identical rules as the haystack or
+/// `fuzzy_find_all`'s `normalized.find(&norm_needle)` would never match. Keeping
+/// a second hand-written copy in sync had already drifted once (see the EOF-trim
+/// note in `normalize_with_map`), so the two share one implementation now.
 pub fn normalize_for_match(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match unicode_remap(ch) {
-            Some("") => continue,
-            Some(replacement) => out.push_str(replacement),
-            None => out.push(ch),
-        }
-    }
-    // Collapse runs of [ \t]+ to a single space.
-    let mut collapsed = String::with_capacity(out.len());
-    let mut last_was_space = false;
-    for ch in out.chars() {
-        if ch == ' ' || ch == '\t' {
-            if !last_was_space {
-                collapsed.push(' ');
-                last_was_space = true;
-            }
-            continue;
-        }
-        last_was_space = false;
-        collapsed.push(ch);
-    }
-    // Trim trailing whitespace on each line.
-    collapsed
-        .split('\n')
-        .map(|l| l.trim_end_matches([' ', '\t']))
-        .collect::<Vec<_>>()
-        .join("\n")
+    normalize_with_map(s).0
 }
 
 /// Find `needle` inside `haystack`. Returns ranges `[start, end)` on the *original* haystack
@@ -96,11 +75,12 @@ fn normalize_with_map(s: &str) -> (String, Vec<usize>) {
             last_was_space = false;
         }
     }
-    // Mirror the per-line trailing-trim that `normalize_for_match` applies to the last
-    // line. Without this, a haystack like `"return x  "` (no trailing newline) keeps a
-    // collapsed trailing space in the normalized form, while the same text in a needle
-    // gets its trailing space trimmed — the resulting end index from `map_back` lands
-    // one byte short and any splice excludes the trailing space from the original.
+    // Trailing-whitespace trim for the final line. Interior lines are trimmed when their
+    // `\n` is reached (above); the last line has no newline, so trim it here. This keeps
+    // the contract uniform: every line's trailing whitespace is dropped. Without it a
+    // string like `"return x  "` (no trailing newline) would keep a collapsed trailing
+    // space, so a needle and an identical haystack tail would normalize differently and
+    // the `map_back` end index would land one byte short of the original span.
     while normalized.ends_with(' ') {
         normalized.pop();
         map_back.pop();
@@ -174,6 +154,10 @@ mod tests {
         assert_eq!(matches.len(), 1);
         let (start, end) = matches[0];
         assert_eq!(start, 0);
-        assert_eq!(end, haystack.len(), "end must extend to haystack length when trailing whitespace was trimmed during normalization");
+        assert_eq!(
+            end,
+            haystack.len(),
+            "end must extend to haystack length when trailing whitespace was trimmed during normalization"
+        );
     }
 }
