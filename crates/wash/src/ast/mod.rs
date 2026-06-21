@@ -204,7 +204,7 @@ pub fn find_body_end(lines: &[&str], header_idx: usize) -> usize {
     }
     // Python `:` body. Strip an optional `# comment` first so headers like
     // `def foo():  # note` are still detected.
-    let py_stripped = header.split('#').next().unwrap_or(header).trim_end();
+    let py_stripped = strip_python_comment(header);
     if py_stripped.ends_with(':') {
         let base_indent = leading_ws(header);
         for i in (header_idx + 1)..lines.len() {
@@ -223,6 +223,13 @@ pub fn find_body_end(lines: &[&str], header_idx: usize) -> usize {
 
 fn strip_line_comment(s: &str) -> &str {
     if let Some(i) = s.find("//") { &s[..i] } else { s }
+}
+
+/// Strip a trailing `# comment` (and trailing whitespace) from a Python header so one like
+/// `def foo():  # note` is still recognized as opening a `:`-body. Shared by `find_body_end`
+/// and the line-regex extractor so the detection rule has a single definition.
+pub(super) fn strip_python_comment(s: &str) -> &str {
+    s.split('#').next().unwrap_or(s).trim_end()
 }
 
 fn leading_ws(s: &str) -> usize {

@@ -56,7 +56,7 @@ pub fn extract(text: &str, language: Language) -> Signatures {
             // Python `:` block. Strip an optional `# comment` so headers like
             // `def foo():  # note` are still detected.
             let py_header = if language == Language::Python {
-                line.split('#').next().unwrap_or(line).trim_end()
+                super::strip_python_comment(line)
             } else {
                 line.trim_end()
             };
