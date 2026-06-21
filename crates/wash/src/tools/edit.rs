@@ -12,7 +12,7 @@ use crate::language::Language;
 use crate::mcp::{Tool, ToolResult};
 use crate::meta::Meta;
 
-const DESCRIPTION: &str = "Batched multi-file edit with fuzzy matching and post-edit syntax check. Pass an array of edits and they apply atomically per-file. Whitespace and visually-equivalent Unicode differences in `oldText` are tolerated for matching only.";
+const DESCRIPTION: &str = "Batched multi-file edit with fuzzy matching and post-edit syntax check. Pass an array of edits and they apply atomically per-file. Whitespace and visually-equivalent Unicode differences in `oldText` are tolerated for matching only. To create a new file, pass a single edit with empty oldText and the full contents as newText.";
 
 pub fn tool() -> Tool {
     Tool {
@@ -123,20 +123,134 @@ fn run(args: &Value) -> Result<ToolResult> {
 
 fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
     if !Path::new(path).exists() {
-        return edits
+        // A creation request is signalled by the first edit having an empty oldText.
+        // Any other combination (non-empty oldText on a missing file) is a genuine error.
+        let first_is_create = edits
+            .first()
+            .map(|e| e.old_text.is_empty())
+            .unwrap_or(false);
+        if !first_is_create {
+            return edits
+                .into_iter()
+                .map(|e| {
+                    (
+                        e.input_index,
+                        EditResult {
+                            path: path.to_string(),
+                            ok: false,
+                            reason: Some(
+                                "file does not exist (to create it, pass an edit with empty oldText)"
+                                    .into(),
+                            ),
+                        },
+                    )
+                })
+                .collect();
+        }
+
+        // --- Creation path ---
+        // Seed the in-memory buffer from the first edit's newText, then apply any
+        // remaining edits in the batch against that buffer via the normal locate() loop.
+        let mut edits_iter = edits.into_iter();
+        let first = edits_iter.next().unwrap(); // safe: edits is non-empty per run()
+        let remaining: Vec<EditSpec> = edits_iter.collect();
+
+        let language = Language::detect(path);
+        // Treat the pre-creation state as clean so the post-edit parse check runs.
+        let clean_before = true;
+        let mut current = first.new_text.clone();
+        let mut partial: Vec<(usize, PartialResult)> = Vec::with_capacity(1 + remaining.len());
+        partial.push((first.input_index, PartialResult::Ok));
+
+        // Re-borrow `remaining` for the shared edit loop below by reconstructing
+        // the expected shape: a combined edits vec for rollback + partial tracking.
+        // We drive the remaining edits inline here.
+        let all_edits_for_rollback: Vec<EditSpec> = {
+            let mut v = vec![EditSpec {
+                path: path.to_string(),
+                old_text: String::new(),
+                new_text: first.new_text.clone(),
+                fuzzy: first.fuzzy,
+                input_index: first.input_index,
+            }];
+            v.extend(remaining.iter().cloned());
+            v
+        };
+
+        for edit in remaining.iter() {
+            let matches = locate(&current, edit);
+            if matches.is_empty() {
+                partial.push((
+                    edit.input_index,
+                    PartialResult::Failed("oldText not found".into()),
+                ));
+                // No file was written yet — rollback with no restoration needed.
+                return rollback(path, all_edits_for_rollback, partial, None);
+            }
+            if matches.len() > 1 {
+                let reason = format!(
+                    "ambiguous match ({} occurrences) — disambiguate by including more context",
+                    matches.len()
+                );
+                partial.push((edit.input_index, PartialResult::Failed(reason)));
+                return rollback(path, all_edits_for_rollback, partial, None);
+            }
+            let (start, end) = matches[0];
+            let mut next =
+                String::with_capacity(current.len() - (end - start) + edit.new_text.len());
+            next.push_str(&current[..start]);
+            next.push_str(&edit.new_text);
+            next.push_str(&current[end..]);
+            current = next;
+            partial.push((edit.input_index, PartialResult::Ok));
+        }
+
+        if clean_before && language != Language::Unknown && !parses_cleanly(&current, language) {
+            return rollback(
+                path,
+                all_edits_for_rollback,
+                partial,
+                Some("post-edit syntax check failed".into()),
+            );
+        }
+
+        // Create parent directories if needed before writing.
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    return rollback(
+                        path,
+                        all_edits_for_rollback,
+                        partial,
+                        Some(format!("create failed: {e}")),
+                    );
+                }
+            }
+        }
+
+        if let Err(e) = atomic_write(path, &current) {
+            let reason = format!("write failed: {e}");
+            return rollback(path, all_edits_for_rollback, partial, Some(reason));
+        }
+
+        return partial
             .into_iter()
-            .map(|e| {
+            .map(|(input_idx, p)| {
                 (
-                    e.input_index,
+                    input_idx,
                     EditResult {
                         path: path.to_string(),
-                        ok: false,
-                        reason: Some("file does not exist".into()),
+                        ok: matches!(p, PartialResult::Ok),
+                        reason: match p {
+                            PartialResult::Ok => None,
+                            PartialResult::Failed(r) => Some(r),
+                        },
                     },
                 )
             })
             .collect();
     }
+
     let original = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(e) => {
@@ -168,6 +282,15 @@ fn apply_to_file(path: &str, edits: Vec<EditSpec>) -> Vec<(usize, EditResult)> {
     let mut partial: Vec<(usize, PartialResult)> = Vec::with_capacity(edits.len());
 
     for edit in edits.iter() {
+        // An empty oldText on an existing file has no defined match semantics —
+        // reject it immediately so the agent gets a clear corrective message.
+        if edit.old_text.is_empty() {
+            partial.push((
+                edit.input_index,
+                PartialResult::Failed("oldText must be non-empty for existing files".into()),
+            ));
+            return rollback(path, edits, partial, None);
+        }
         let matches = locate(&current, edit);
         if matches.is_empty() {
             partial.push((
@@ -554,6 +677,109 @@ mod tests {
             fs::read_to_string(&path).unwrap(),
             before,
             "file must be unchanged"
+        );
+    }
+
+    #[test]
+    fn empty_old_text_creates_new_file() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("new.ts").to_string_lossy().into_owned();
+        let v = call(json!([{
+            "path": path,
+            "oldText": "",
+            "newText": "export const x = 1;\n"
+        }]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], true, "{:?}", v["results"][0]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "export const x = 1;\n");
+    }
+
+    #[test]
+    fn create_in_nested_directory() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("a/b/c.ts").to_string_lossy().into_owned();
+        let v = call(json!([{
+            "path": path,
+            "oldText": "",
+            "newText": "export const y = 2;\n"
+        }]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], true, "{:?}", v["results"][0]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "export const y = 2;\n");
+    }
+
+    #[test]
+    fn create_then_edit_same_batch() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("batch.ts").to_string_lossy().into_owned();
+        let v = call(json!([
+            {"path": path, "oldText": "", "newText": "a = 1\n"},
+            {"path": path, "oldText": "a = 1", "newText": "a = 2"}
+        ]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], true, "{:?}", v["results"][0]);
+        assert_eq!(v["results"][1]["ok"], true, "{:?}", v["results"][1]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a = 2\n");
+    }
+
+    #[test]
+    fn create_with_invalid_syntax_rolls_back() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("broken.ts").to_string_lossy().into_owned();
+        let v = call(json!([{
+            "path": path,
+            "oldText": "",
+            "newText": "function broken( {"
+        }]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], false, "{:?}", v["results"][0]);
+        let reason = v["results"][0]["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("post-edit syntax check failed"),
+            "expected syntax-check reason, got: {reason}"
+        );
+        assert!(
+            !Path::new(&path).exists(),
+            "file must not be created when syntax check fails"
+        );
+    }
+
+    #[test]
+    fn nonexistent_file_with_nonempty_old_text_still_fails() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ghost.ts").to_string_lossy().into_owned();
+        let v = call(json!([{
+            "path": path,
+            "oldText": "something",
+            "newText": "other"
+        }]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], false);
+        let reason = v["results"][0]["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("file does not exist"),
+            "expected does-not-exist reason, got: {reason}"
+        );
+        assert!(
+            reason.contains("empty oldText"),
+            "reason should mention empty oldText hint, got: {reason}"
+        );
+    }
+
+    #[test]
+    fn empty_old_text_on_existing_file_fails() {
+        let (_dir, path) = tmp_file("hello\n", ".ts");
+        let v = call(json!([{
+            "path": path,
+            "oldText": "",
+            "newText": "world\n"
+        }]))
+        .unwrap();
+        assert_eq!(v["results"][0]["ok"], false);
+        let reason = v["results"][0]["reason"].as_str().unwrap();
+        assert_eq!(
+            reason, "oldText must be non-empty for existing files",
+            "got: {reason}"
         );
     }
 }
