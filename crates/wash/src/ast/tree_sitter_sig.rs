@@ -20,7 +20,11 @@ pub fn extract(text: &str, language: Language) -> Option<Signatures> {
     let mut line_map: Vec<LineMapEntry> = Vec::new();
     walk(tree.root_node(), bytes, &lines, &mut out, &mut line_map);
     let (content, source_lines) = render(&out);
-    Some(Signatures { content, line_map, source_lines })
+    Some(Signatures {
+        content,
+        line_map,
+        source_lines,
+    })
 }
 
 fn render(out: &[(String, u32)]) -> (String, Vec<u32>) {
@@ -106,7 +110,10 @@ fn walk_with_outer(
         "interface_declaration" | "type_alias_declaration" | "enum_declaration" => {
             push_node_text(outer_start, node.end_byte(), src, outer_row, out);
             if let Some(sym) = name_of(node, src) {
-                line_map.push(LineMapEntry { symbol: sym, line: src_row });
+                line_map.push(LineMapEntry {
+                    symbol: sym,
+                    line: src_row,
+                });
             }
             return;
         }
@@ -125,7 +132,10 @@ fn walk_with_outer(
         "lexical_declaration" | "variable_declaration" => {
             push_node_text(outer_start, node.end_byte(), src, outer_row, out);
             if let Some(sym) = first_named_var(node, src) {
-                line_map.push(LineMapEntry { symbol: sym, line: src_row });
+                line_map.push(LineMapEntry {
+                    symbol: sym,
+                    line: src_row,
+                });
             }
             return;
         }
@@ -154,7 +164,10 @@ fn emit_signature(
 ) {
     let src_row = node.start_position().row as u32 + 1;
     if let Some(sym) = name_of(node, src) {
-        line_map.push(LineMapEntry { symbol: sym, line: src_row });
+        line_map.push(LineMapEntry {
+            symbol: sym,
+            line: src_row,
+        });
     }
     let body = node.child_by_field_name("body");
     if let Some(body) = body {
@@ -184,7 +197,10 @@ fn emit_class(
 ) {
     let src_row = node.start_position().row as u32 + 1;
     if let Some(sym) = name_of(node, src) {
-        line_map.push(LineMapEntry { symbol: sym, line: src_row });
+        line_map.push(LineMapEntry {
+            symbol: sym,
+            line: src_row,
+        });
     }
     let body = match node.child_by_field_name("body") {
         Some(b) => b,

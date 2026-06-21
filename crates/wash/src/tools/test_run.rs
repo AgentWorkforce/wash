@@ -5,12 +5,15 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use super::logs;
 use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
+use crate::process;
+
+/// Test suites can run long; 15 minutes bounds a hang without clipping real work.
+const TEST_TIMEOUT: Duration = Duration::from_secs(900);
 
 const DESCRIPTION: &str = "Run tests and return structured counts + failure summaries. Use `failuresOnly` (default true) to elide passing-test noise. Use `getFailureLog: <name>` to fetch the log slice for a single failure from a previous run.";
 
@@ -64,25 +67,30 @@ fn run(args: &Value) -> Result<ToolResult> {
         return ok_value(fetch_failure_slice(name)?);
     }
 
-    let cwd: PathBuf = args
-        .get("cwd")
+    let cwd: PathBuf = super::cwd_arg(args);
+    let pattern = args
+        .get("pattern")
         .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-    let pattern = args.get("pattern").and_then(|v| v.as_str()).map(String::from);
+        .map(String::from);
     let paths: Vec<String> = args
         .get("paths")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
-    let failures_only = args.get("failuresOnly").and_then(|v| v.as_bool()).unwrap_or(true);
-    let max_failures = args
-        .get("maxFailures")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_MAX_FAILURES);
+    let failures_only = args
+        .get("failuresOnly")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let max_failures = super::usize_arg(args, "maxFailures", DEFAULT_MAX_FAILURES);
 
-    let requested = args.get("runner").and_then(|v| v.as_str()).unwrap_or("auto");
+    let requested = args
+        .get("runner")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     let runner = if requested == "auto" {
         detect_runner(&cwd)
     } else {
@@ -104,19 +112,10 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
 
     let t0 = Instant::now();
-    let out = Command::new(&cmd[0]).args(&cmd[1..]).current_dir(&cwd).output();
+    let captured = process::run(&cmd[0], &cmd[1..], &cwd, TEST_TIMEOUT);
     let duration = t0.elapsed().as_millis() as u64;
-    let (stdout, stderr, baseline) = match out {
-        Ok(o) => {
-            // Baseline is the raw byte count the agent would have paid for, computed
-            // from the original stdout/stderr so lossy UTF-8 decoding can't skew it.
-            let baseline = (o.stdout.len() + o.stderr.len()) as u64;
-            (
-                String::from_utf8_lossy(&o.stdout).into_owned(),
-                String::from_utf8_lossy(&o.stderr).into_owned(),
-                baseline,
-            )
-        }
+    let captured = match captured {
+        Ok(c) => c,
         Err(e) => {
             return ok_value(json!({
                 "runner": runner,
@@ -130,8 +129,14 @@ fn run(args: &Value) -> Result<ToolResult> {
             }));
         }
     };
+    let (stdout, stderr, baseline, timed_out) = (
+        captured.stdout,
+        captured.stderr,
+        captured.baseline,
+        captured.timed_out,
+    );
     let raw = format!("{stdout}{stderr}");
-    let log_path = crate::tools::build::write_log("testrun", &raw).ok();
+    let log_path = logs::write("testrun", &raw).ok();
 
     let parsed = parse_runner_output(&runner, &raw);
     let failures: Vec<Failure> = if failures_only {
@@ -140,7 +145,7 @@ fn run(args: &Value) -> Result<ToolResult> {
         parsed.failures.clone()
     };
 
-    ok_value_with_baseline(json!({
+    let mut result = json!({
         "runner": runner,
         "passed": parsed.passed,
         "failed": parsed.failed,
@@ -148,17 +153,26 @@ fn run(args: &Value) -> Result<ToolResult> {
         "duration": duration,
         "failures": failures,
         "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-    }), baseline)
+    });
+    if timed_out {
+        // Keep the partial counts parsed from whatever ran before the kill; the
+        // `error` field tells the model the run was cut short.
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert(
+                "error".into(),
+                json!(format!("timed out after {}s", TEST_TIMEOUT.as_secs())),
+            );
+        }
+    }
+    ok_value_with_baseline(result, baseline)
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__TestRun", value)
-        .with_meta(Meta::new(["Bash:test".to_string()], 1)))
+    super::ok_with_meta("relaywash__TestRun", "Bash:test", value, None)
 }
 
 fn ok_value_with_baseline(value: Value, baseline: u64) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__TestRun", value)
-        .with_meta(Meta::new(["Bash:test".to_string()], 1).with_baseline(baseline)))
+    super::ok_with_meta("relaywash__TestRun", "Bash:test", value, Some(baseline))
 }
 
 fn detect_runner(cwd: &Path) -> String {
@@ -282,13 +296,22 @@ fn parse_pytest(raw: &str) -> ParseOut {
     static SKIPPED: OnceLock<Regex> = OnceLock::new();
     static FAIL_LINE: OnceLock<Regex> = OnceLock::new();
     let mut out = ParseOut::default();
-    if let Some(c) = PASSED.get_or_init(|| Regex::new(r"(\d+)\s+passed").unwrap()).captures(raw) {
+    if let Some(c) = PASSED
+        .get_or_init(|| Regex::new(r"(\d+)\s+passed").unwrap())
+        .captures(raw)
+    {
         out.passed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = FAILED.get_or_init(|| Regex::new(r"(\d+)\s+failed").unwrap()).captures(raw) {
+    if let Some(c) = FAILED
+        .get_or_init(|| Regex::new(r"(\d+)\s+failed").unwrap())
+        .captures(raw)
+    {
         out.failed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = SKIPPED.get_or_init(|| Regex::new(r"(\d+)\s+skipped").unwrap()).captures(raw) {
+    if let Some(c) = SKIPPED
+        .get_or_init(|| Regex::new(r"(\d+)\s+skipped").unwrap())
+        .captures(raw)
+    {
         out.skipped = c[1].parse().unwrap_or(0);
     }
     let fail_re = FAIL_LINE.get_or_init(|| Regex::new(r"FAILED\s+(\S+)::(\S+)").unwrap());
@@ -342,7 +365,10 @@ fn parse_cargo_test(raw: &str) -> ParseOut {
             if t.is_empty() {
                 break;
             }
-            if !t.starts_with(char::is_whitespace) && !line.starts_with(' ') && !line.starts_with('\t') {
+            if !t.starts_with(char::is_whitespace)
+                && !line.starts_with(' ')
+                && !line.starts_with('\t')
+            {
                 // Stop when we leave the indented block.
                 if !t.starts_with("test ") && !t.contains("::") {
                     break;
@@ -364,13 +390,22 @@ fn parse_node_test(raw: &str) -> ParseOut {
     static SKIP: OnceLock<Regex> = OnceLock::new();
     static NOT_OK: OnceLock<Regex> = OnceLock::new();
     let mut out = ParseOut::default();
-    if let Some(c) = PASS.get_or_init(|| Regex::new(r"#\s*pass\s+(\d+)").unwrap()).captures(raw) {
+    if let Some(c) = PASS
+        .get_or_init(|| Regex::new(r"#\s*pass\s+(\d+)").unwrap())
+        .captures(raw)
+    {
         out.passed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = FAIL.get_or_init(|| Regex::new(r"#\s*fail\s+(\d+)").unwrap()).captures(raw) {
+    if let Some(c) = FAIL
+        .get_or_init(|| Regex::new(r"#\s*fail\s+(\d+)").unwrap())
+        .captures(raw)
+    {
         out.failed = c[1].parse().unwrap_or(0);
     }
-    if let Some(c) = SKIP.get_or_init(|| Regex::new(r"#\s*skipped\s+(\d+)").unwrap()).captures(raw) {
+    if let Some(c) = SKIP
+        .get_or_init(|| Regex::new(r"#\s*skipped\s+(\d+)").unwrap())
+        .captures(raw)
+    {
         out.skipped = c[1].parse().unwrap_or(0);
     }
     let not_ok = NOT_OK.get_or_init(|| Regex::new(r"(?m)^not ok \d+ - (.+)$").unwrap());
@@ -387,7 +422,8 @@ fn parse_node_test(raw: &str) -> ParseOut {
 fn parse_jest(raw: &str) -> ParseOut {
     static SUMMARY: OnceLock<Regex> = OnceLock::new();
     let re = SUMMARY.get_or_init(|| {
-        Regex::new(r"Tests?:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(\d+)\s+passed").unwrap()
+        Regex::new(r"Tests?:\s*(?:(\d+)\s+failed,\s*)?(?:(\d+)\s+skipped,\s*)?(\d+)\s+passed")
+            .unwrap()
     });
     let mut out = ParseOut::default();
     if let Some(c) = re.captures(raw) {
@@ -404,7 +440,9 @@ fn parse_jest(raw: &str) -> ParseOut {
             continue;
         }
         let after_marker = &raw[pos + '●'.len_utf8()..];
-        let Some(name_end) = after_marker.find('\n') else { continue };
+        let Some(name_end) = after_marker.find('\n') else {
+            continue;
+        };
         let name = after_marker[..name_end].trim().to_string();
         if name.is_empty() {
             continue;
@@ -423,7 +461,11 @@ fn parse_jest(raw: &str) -> ParseOut {
             }
         }
         let body = &raw[body_abs_start..body_end];
-        let truncated = if body.len() > 1000 { &body[..1000] } else { body };
+        let truncated = if body.len() > 1000 {
+            &body[..1000]
+        } else {
+            body
+        };
         out.failures.push(Failure {
             name,
             file: String::new(),
@@ -434,30 +476,23 @@ fn parse_jest(raw: &str) -> ParseOut {
 }
 
 fn fetch_failure_slice(name: &str) -> Result<Value> {
-    let dir = crate::tools::build::log_dir();
-    if !dir.exists() {
-        return Ok(json!({"found": false}));
-    }
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)?
-        .filter_map(|r| r.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .and_then(|x| x.to_str())
-                .map(|x| x == "log")
-                .unwrap_or(false)
-        })
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    let Some(latest) = entries.last() else {
+    let Some(latest) = logs::latest("testrun")? else {
         return Ok(json!({"found": false}));
     };
-    let body = std::fs::read_to_string(latest.path())?;
+    let body = std::fs::read_to_string(latest)?;
     let Some(idx) = body.find(name) else {
         return Ok(json!({"found": false}));
     };
-    let start = idx.saturating_sub(500);
-    let end = (idx + 2000).min(body.len());
+    // Widen the byte window to char boundaries — a multibyte char straddling the ±window
+    // edge would otherwise panic the slice.
+    let mut start = idx.saturating_sub(500);
+    while start > 0 && !body.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = (idx + 2000).min(body.len());
+    while end < body.len() && !body.is_char_boundary(end) {
+        end += 1;
+    }
     Ok(json!({
         "found": true,
         "slice": &body[start..end],

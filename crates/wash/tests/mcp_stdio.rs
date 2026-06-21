@@ -136,7 +136,9 @@ fn every_core_tool_emits_meta() {
             .find(|t| t.name == name)
             .unwrap_or_else(|| panic!("missing tool {name}"))
     };
-    let ctx = ToolContext { session_id: Some("meta-test".into()) };
+    let ctx = ToolContext {
+        session_id: Some("meta-test".into()),
+    };
 
     // Search
     let search = find("relaywash__Search");
@@ -163,9 +165,11 @@ fn every_core_tool_emits_meta() {
     // TestRun — same idea: the `getFailureLog` branch reads a tmp dir and returns a
     // structured `{"found": false}` without spawning a runner.
     let test_run = find("relaywash__TestRun");
-    let res =
-        (test_run.handler)(&json!({"getFailureLog": "definitely-not-a-real-test-name"}), &ctx)
-            .unwrap();
+    let res = (test_run.handler)(
+        &json!({"getFailureLog": "definitely-not-a-real-test-name"}),
+        &ctx,
+    )
+    .unwrap();
     assert_meta(&res, &["Bash:test"]);
 }
 
@@ -183,7 +187,10 @@ fn assert_meta(res: &wash::mcp::ToolResult, expected_replaces: &[&str]) {
         .filter_map(|v| v.as_str())
         .collect();
     for r in expected_replaces {
-        assert!(replaces.contains(r), "expected replaces to contain {r}, got {replaces:?}");
+        assert!(
+            replaces.contains(r),
+            "expected replaces to contain {r}, got {replaces:?}"
+        );
     }
     assert!(structured_meta["responseBytes"].as_u64().unwrap() > 0);
     assert!(structured_meta["schemaVersion"].as_u64().unwrap() >= 1);
@@ -234,9 +241,16 @@ fn tools_call_handler_errors_become_is_error_result() {
     let resp = read_one(&mut stdout, &mut buf, deadline).expect("tools/call response");
 
     assert_eq!(resp["id"], 2);
-    assert!(resp.get("error").is_none(), "handler Err should NOT surface as JSON-RPC error: {resp}");
+    assert!(
+        resp.get("error").is_none(),
+        "handler Err should NOT surface as JSON-RPC error: {resp}"
+    );
     let result = &resp["result"];
-    assert_eq!(result["isError"], json!(true), "expected isError: true, got {result}");
+    assert_eq!(
+        result["isError"],
+        json!(true),
+        "expected isError: true, got {result}"
+    );
     let text = result["content"][0]["text"].as_str().expect("error text");
     assert!(!text.is_empty(), "error text should be non-empty");
 
@@ -280,10 +294,16 @@ fn tools_call_protocol_errors_use_jsonrpc_error() {
     let resp = read_one(&mut stdout, &mut buf, deadline).expect("tools/call response");
 
     assert_eq!(resp["id"], 2);
-    assert!(resp.get("result").is_none(), "unknown tool should not return a result: {resp}");
+    assert!(
+        resp.get("result").is_none(),
+        "unknown tool should not return a result: {resp}"
+    );
     assert_eq!(resp["error"]["code"], json!(-32000));
     let msg = resp["error"]["message"].as_str().expect("error message");
-    assert!(msg.contains("Unknown tool"), "unexpected error message: {msg}");
+    assert!(
+        msg.contains("Unknown tool"),
+        "unexpected error message: {msg}"
+    );
 
     drop(stdin);
     let _ = child.wait();
@@ -334,8 +354,58 @@ fn mcp_initialize_and_tools_list() {
         "relaywash__Build",
         "relaywash__GhPR",
     ] {
-        assert!(names.contains(&expected), "missing {expected}; got {names:?}");
+        assert!(
+            names.contains(&expected),
+            "missing {expected}; got {names:?}"
+        );
     }
+
+    drop(stdin);
+    let _ = child.wait();
+}
+
+/// A corrupt frame must not kill the long-lived server: a frame whose body is not valid
+/// UTF-8 (and thus not valid JSON) is skipped, and a subsequent valid request still gets
+/// a response. Regression test for the run loop treating a bad body as fatal.
+#[test]
+fn corrupt_frame_does_not_kill_server() {
+    let bin = env!("CARGO_BIN_EXE_wash");
+    let mut child = Command::new(bin)
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn wash mcp");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    // A framed message whose 4-byte body is invalid UTF-8 (0xff.. is never valid UTF-8).
+    let mut corrupt = b"Content-Length: 4\r\n\r\n".to_vec();
+    corrupt.extend_from_slice(&[0xff, 0xfe, 0xfd, 0xfc]);
+    stdin.write_all(&corrupt).unwrap();
+    // ...immediately followed by a valid request. If the bad frame were fatal, this would
+    // never be answered.
+    stdin
+        .write_all(&frame(
+            &json!({"jsonrpc":"2.0","id":7,"method":"initialize","params":{}}),
+        ))
+        .unwrap();
+    stdin.flush().unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut buf = Vec::new();
+    let resp = read_one(&mut stdout, &mut buf, deadline)
+        .expect("server should answer the valid request after skipping the corrupt frame");
+    assert_eq!(
+        resp["id"],
+        json!(7),
+        "expected the initialize response to survive"
+    );
+    assert!(
+        resp.get("result").is_some(),
+        "initialize should return a result"
+    );
 
     drop(stdin);
     let _ = child.wait();

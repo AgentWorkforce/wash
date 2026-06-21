@@ -9,9 +9,7 @@ use std::io::Write;
 use super::{write_continue, write_json};
 
 pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
-    let tool = payload
-        .get("tool_name")
-        .or_else(|| payload.get("toolName"))
+    let tool = super::payload_field(payload, "tool_name", "toolName")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 

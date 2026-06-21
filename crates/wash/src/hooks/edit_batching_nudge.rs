@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{sanitize_session_id, write_continue, write_json};
 
@@ -26,19 +26,19 @@ struct Entry {
 }
 
 pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
-    run_in(&nudge_dir_default(), payload, out)
+    run_in(
+        &crate::profile::ledger_home().join("edit-nudge"),
+        payload,
+        out,
+    )
 }
 
 fn run_in(dir: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
-    let raw_session = payload
-        .get("session_id")
-        .or_else(|| payload.get("sessionId"))
+    let raw_session = super::payload_field(payload, "session_id", "sessionId")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
     let session_id = sanitize_session_id(raw_session);
-    let edit_count: u32 = payload
-        .get("tool_input")
-        .or_else(|| payload.get("toolInput"))
+    let edit_count: u32 = super::payload_field(payload, "tool_input", "toolInput")
         .and_then(|v| v.get("edits"))
         .and_then(|v| v.as_array())
         .map(|a| a.len() as u32)
@@ -75,17 +75,6 @@ fn run_in(dir: &Path, payload: &Value, out: &mut impl Write) -> Result<()> {
     write_continue(out)
 }
 
-fn nudge_dir_default() -> PathBuf {
-    let home = if let Ok(s) = std::env::var("RELAYBURN_HOME") {
-        PathBuf::from(s)
-    } else if let Some(h) = std::env::var_os("HOME") {
-        PathBuf::from(h).join(".relayburn")
-    } else {
-        PathBuf::from(".relayburn")
-    };
-    home.join("edit-nudge")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,10 +90,16 @@ mod tests {
     fn nudges_after_three_single_edits() {
         let tmp = TempDir::new().unwrap();
         for _ in 0..2 {
-            let s = drive(tmp.path(), json!({"session_id": "a", "tool_input": {"edits": [{}]}}));
+            let s = drive(
+                tmp.path(),
+                json!({"session_id": "a", "tool_input": {"edits": [{}]}}),
+            );
             assert!(!s.contains("systemMessage"), "should not nudge yet: {s}");
         }
-        let s = drive(tmp.path(), json!({"session_id": "a", "tool_input": {"edits": [{}]}}));
+        let s = drive(
+            tmp.path(),
+            json!({"session_id": "a", "tool_input": {"edits": [{}]}}),
+        );
         assert!(s.contains("systemMessage"), "should nudge on third: {s}");
         assert!(s.contains("relaywash__Edit"));
     }
@@ -117,7 +112,10 @@ mod tests {
                 tmp.path(),
                 json!({"session_id": "b", "tool_input": {"edits": [{}, {}, {}]}}),
             );
-            assert!(!s.contains("systemMessage"), "batched should not nudge: {s}");
+            assert!(
+                !s.contains("systemMessage"),
+                "batched should not nudge: {s}"
+            );
         }
     }
 }

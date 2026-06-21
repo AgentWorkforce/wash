@@ -1,0 +1,9 @@
+[toolchain]
+# Pinned so rustfmt output is identical for every developer and in CI. Floating
+# "stable" let each machine's rustfmt drift (that's how 100+ files diverged with
+# no code change). Bump this deliberately — and reformat in the same commit — so
+# formatting changes are always intentional and reviewable. CI installs the same
+# version (.github/workflows/ci.yml) and gates `cargo fmt --check` against it.
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

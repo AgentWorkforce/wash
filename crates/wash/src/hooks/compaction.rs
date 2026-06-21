@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 use super::{sanitize_session_id, write_continue};
 use crate::profile::ledger_home;
 use crate::tokens::estimate_tokens_usize;
+use crate::transcript;
 
 const SNAPSHOT_SUBDIR: &str = "compaction";
 const SESSIONS_SUBDIR: &str = "sessions";
@@ -84,7 +85,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
         .join(format!("{session_id}-pre.jsonl"));
     let transcript_path = extract_transcript_path(payload);
 
-    let pre_entries = match read_jsonl(&snapshot_path) {
+    let pre_entries = match transcript::read_file(&snapshot_path) {
         Ok(rows) => rows,
         Err(e) => {
             // Missing snapshot is expected the first time around (e.g. if the
@@ -99,7 +100,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
     };
 
     let post_entries = match transcript_path.as_deref() {
-        Some(p) => match read_jsonl(p) {
+        Some(p) => match transcript::read_file(p) {
             Ok(rows) => rows,
             Err(e) => {
                 eprintln!(
@@ -118,9 +119,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
     let event = build_event(&trigger, &pre_entries, &post_entries);
 
     if let Err(e) = append_session_event(home, &session_id, &event) {
-        eprintln!(
-            "relaywash: post-compact ledger append failed (session={session_id}): {e}"
-        );
+        eprintln!("relaywash: post-compact ledger append failed (session={session_id}): {e}");
     }
 
     // Snapshot is consumed: best-effort cleanup so we don't accumulate stale
@@ -130,7 +129,7 @@ fn run_post_with(home: &Path, payload: &Value, out: &mut impl Write) -> Result<(
     write_continue(out)
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 struct ToolSurvival {
     #[serde(rename = "callsBefore")]
     calls_before: u64,
@@ -163,14 +162,16 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
     // surviving tool_result blocks back to their producing tool. Independent of
     // survival: a `tool_use` block carries the tool name even if its result
     // ended up in a different message uuid.
-    let pre_tool_use_to_name: HashMap<String, String> = pre
-        .iter()
-        .flat_map(|row| extract_tool_uses(row))
-        .collect();
+    let pre_tool_use_to_name: HashMap<String, String> =
+        pre.iter().flat_map(|row| extract_tool_uses(row)).collect();
 
     let post_uuids: HashSet<String> = post
         .iter()
-        .filter_map(|row| row.get("uuid").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .filter_map(|row| {
+            row.get("uuid")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
         .collect();
 
     let mut pre_counts: indexmap::IndexMap<String, ToolSurvival> = indexmap::IndexMap::new();
@@ -186,12 +187,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
                 .get(&block.tool_use_id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
-            let entry = pre_counts.entry(tool).or_insert(ToolSurvival {
-                calls_before: 0,
-                calls_after: 0,
-                estimated_tokens_before: 0,
-                estimated_tokens_after: 0,
-            });
+            let entry = pre_counts.entry(tool).or_default();
             entry.calls_before += 1;
             entry.estimated_tokens_before += estimate_tokens_usize(block.bytes);
         }
@@ -211,12 +207,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
             synthetic_summaries += 1;
             let entry = post_counts
                 .entry(SYNTHETIC_SUMMARY_TOOL.to_string())
-                .or_insert(ToolSurvival {
-                    calls_before: 0,
-                    calls_after: 0,
-                    estimated_tokens_before: 0,
-                    estimated_tokens_after: 0,
-                });
+                .or_default();
             entry.calls_after += 1;
             entry.estimated_tokens_after += estimate_tokens_usize(message_bytes(row));
             continue;
@@ -226,12 +217,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
                 .get(&block.tool_use_id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
-            let entry = post_counts.entry(tool).or_insert(ToolSurvival {
-                calls_before: 0,
-                calls_after: 0,
-                estimated_tokens_before: 0,
-                estimated_tokens_after: 0,
-            });
+            let entry = post_counts.entry(tool).or_default();
             entry.calls_after += 1;
             entry.estimated_tokens_after += estimate_tokens_usize(block.bytes);
         }
@@ -243,12 +229,7 @@ fn build_event(trigger: &str, pre: &[Value], post: &[Value]) -> CompactionEvent 
         merged.insert(tool, pre_entry);
     }
     for (tool, post_entry) in post_counts {
-        let m = merged.entry(tool).or_insert(ToolSurvival {
-            calls_before: 0,
-            calls_after: 0,
-            estimated_tokens_before: 0,
-            estimated_tokens_after: 0,
-        });
+        let m = merged.entry(tool).or_default();
         m.calls_after += post_entry.calls_after;
         m.estimated_tokens_after += post_entry.estimated_tokens_after;
     }
@@ -331,7 +312,10 @@ fn is_synthetic_summary(row: &Value) -> bool {
     if row.get("type").and_then(|v| v.as_str()) == Some("summary") {
         return true;
     }
-    if let Some(role) = row.get("message").and_then(|m| m.get("role")).and_then(|v| v.as_str())
+    if let Some(role) = row
+        .get("message")
+        .and_then(|m| m.get("role"))
+        .and_then(|v| v.as_str())
         && role == "system"
         && row
             .get("subtype")
@@ -356,47 +340,23 @@ fn append_session_event(home: &Path, session_id: &str, event: &CompactionEvent) 
     fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{session_id}.jsonl"));
     let line = serde_json::to_string(event)?;
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     writeln!(f, "{line}")?;
     Ok(())
 }
 
-fn read_jsonl(path: &Path) -> std::io::Result<Vec<Value>> {
-    let raw = fs::read_to_string(path)?;
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<Value>(trimmed) {
-            Ok(v) => out.push(v),
-            Err(e) => {
-                // Single malformed line shouldn't abort the whole parse — log
-                // and continue so the rest of the transcript still attributes.
-                eprintln!(
-                    "relaywash: compaction parse skipped malformed line in {}: {e}",
-                    path.display()
-                );
-            }
-        }
-    }
-    Ok(out)
-}
-
 fn extract_session_id(payload: &Value) -> String {
-    let raw = payload
-        .get("session_id")
-        .or_else(|| payload.get("sessionId"))
+    let raw = super::payload_field(payload, "session_id", "sessionId")
         .and_then(|v| v.as_str())
         .unwrap_or("default");
     sanitize_session_id(raw)
 }
 
 fn extract_transcript_path(payload: &Value) -> Option<PathBuf> {
-    payload
-        .get("transcript_path")
-        .or_else(|| payload.get("transcriptPath"))
+    super::payload_field(payload, "transcript_path", "transcriptPath")
         .and_then(|v| v.as_str())
         .map(PathBuf::from)
 }
@@ -442,9 +402,8 @@ mod tests {
 
     fn read_event(home: &Path, session: &str) -> Value {
         let path = home.join(SESSIONS_SUBDIR).join(format!("{session}.jsonl"));
-        let raw = fs::read_to_string(&path).unwrap_or_else(|e| {
-            panic!("session ledger missing at {}: {e}", path.display())
-        });
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("session ledger missing at {}: {e}", path.display()));
         let last = raw.lines().filter(|l| !l.is_empty()).next_back().unwrap();
         serde_json::from_str(last).unwrap()
     }
@@ -542,10 +501,7 @@ mod tests {
         let read = &ev["perToolSurvival"]["Read"];
         assert_eq!(read["callsBefore"], 1);
         assert_eq!(read["callsAfter"], 1);
-        assert_eq!(
-            read["estimatedTokensBefore"],
-            read["estimatedTokensAfter"]
-        );
+        assert_eq!(read["estimatedTokensBefore"], read["estimatedTokensAfter"]);
     }
 
     #[test]
@@ -642,7 +598,10 @@ mod tests {
         let snap = home.join(SNAPSHOT_SUBDIR).join("s-clean-pre.jsonl");
         assert!(snap.exists());
         drive_post(home, payload);
-        assert!(!snap.exists(), "snapshot should be cleaned up after post-compact");
+        assert!(
+            !snap.exists(),
+            "snapshot should be cleaned up after post-compact"
+        );
     }
 
     #[test]

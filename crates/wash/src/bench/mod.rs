@@ -13,6 +13,6 @@ pub mod compare;
 pub mod report;
 pub mod run;
 
-pub use compare::{CompareOutcome, CompareOptions, compare};
+pub use compare::{CompareOptions, CompareOutcome, compare};
 pub use report::{CallRecord, ExpectationOutcome, RunReport, SuiteReport, TaskReport};
 pub use run::{RunOptions, run_suite, run_task};

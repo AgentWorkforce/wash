@@ -5,12 +5,16 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
+use super::logs;
 use crate::mcp::{Tool, ToolResult};
-use crate::meta::Meta;
+use crate::process;
+
+/// Builds and test suites can legitimately run for many minutes; 15 minutes
+/// bounds a hung command without clipping real work.
+const BUILD_TIMEOUT: Duration = Duration::from_secs(900);
 
 const DESCRIPTION: &str = "Run the project build and return a tiny structured response. Successful builds return one line; failing tsc/cargo/go builds return parsed `errors[]`; other builders return an `errorTail`.";
 
@@ -47,18 +51,16 @@ struct BuildError {
 }
 
 fn run(args: &Value) -> Result<ToolResult> {
-    let cwd: PathBuf = args
-        .get("cwd")
+    let cwd: PathBuf = super::cwd_arg(args);
+    let target = args
+        .get("target")
         .and_then(|v| v.as_str())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-    let target = args.get("target").and_then(|v| v.as_str()).map(String::from);
-    let tail_lines = args
-        .get("errorTailLines")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .unwrap_or(DEFAULT_TAIL_LINES);
-    let requested = args.get("builder").and_then(|v| v.as_str()).unwrap_or("auto");
+        .map(String::from);
+    let tail_lines = super::usize_arg(args, "errorTailLines", DEFAULT_TAIL_LINES);
+    let requested = args
+        .get("builder")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
     let builder = if requested == "auto" {
         detect_builder(&cwd)
     } else {
@@ -77,21 +79,10 @@ fn run(args: &Value) -> Result<ToolResult> {
     };
 
     let t0 = Instant::now();
-    let out = Command::new(&cmd[0]).args(&cmd[1..]).current_dir(&cwd).output();
+    let captured = process::run(&cmd[0], &cmd[1..], &cwd, BUILD_TIMEOUT);
     let duration = t0.elapsed().as_millis() as u64;
-    let (stdout, stderr, status_code, baseline) = match out {
-        Ok(o) => {
-            // Baseline is the raw byte count the agent would have paid for. Compute it
-            // from the original stdout/stderr (plus the "\n" we stitch in below) so
-            // that lossy UTF-8 decoding can't drift the savings estimate.
-            let baseline = (o.stdout.len() + 1 + o.stderr.len()) as u64;
-            (
-                String::from_utf8_lossy(&o.stdout).into_owned(),
-                String::from_utf8_lossy(&o.stderr).into_owned(),
-                o.status.code(),
-                baseline,
-            )
-        }
+    let captured = match captured {
+        Ok(c) => c,
         Err(e) => {
             return ok_value(json!({
                 "builder": builder,
@@ -102,47 +93,78 @@ fn run(args: &Value) -> Result<ToolResult> {
             }));
         }
     };
+    let (stdout, stderr, status_code, baseline, timed_out) = (
+        captured.stdout,
+        captured.stderr,
+        captured.status,
+        captured.baseline,
+        captured.timed_out,
+    );
     let raw = format!("{stdout}\n{stderr}");
-    let log_path = write_log("build", &raw).ok();
+    let log_path = logs::write("build", &raw).ok();
+
+    if timed_out {
+        let tail = tail_lines_of(&raw, tail_lines);
+        return ok_value_with_baseline(
+            json!({
+                "builder": builder,
+                "success": false,
+                "duration": duration,
+                "errorTail": format!(
+                    "timed out after {}s; partial output:\n{tail}",
+                    BUILD_TIMEOUT.as_secs()
+                ),
+                "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            }),
+            baseline,
+        );
+    }
 
     let success = status_code == Some(0);
     if success {
-        return ok_value_with_baseline(json!({
-            "builder": builder,
-            "success": true,
-            "duration": duration,
-            "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        }), baseline);
+        return ok_value_with_baseline(
+            json!({
+                "builder": builder,
+                "success": true,
+                "duration": duration,
+                "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            }),
+            baseline,
+        );
     }
 
     let errors = parse_errors(&builder, &raw);
     if !errors.is_empty() {
-        return ok_value_with_baseline(json!({
+        return ok_value_with_baseline(
+            json!({
+                "builder": builder,
+                "success": false,
+                "duration": duration,
+                "errors": errors,
+                "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            }),
+            baseline,
+        );
+    }
+    let tail = tail_lines_of(&raw, tail_lines);
+    ok_value_with_baseline(
+        json!({
             "builder": builder,
             "success": false,
             "duration": duration,
-            "errors": errors,
+            "errorTail": tail,
             "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-        }), baseline);
-    }
-    let tail = tail_lines_of(&raw, tail_lines);
-    ok_value_with_baseline(json!({
-        "builder": builder,
-        "success": false,
-        "duration": duration,
-        "errorTail": tail,
-        "fullLogPath": log_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
-    }), baseline)
+        }),
+        baseline,
+    )
 }
 
 fn ok_value(value: Value) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__Build", value)
-        .with_meta(Meta::new(["Bash:build".to_string()], 1)))
+    super::ok_with_meta("relaywash__Build", "Bash:build", value, None)
 }
 
 fn ok_value_with_baseline(value: Value, baseline: u64) -> Result<ToolResult> {
-    Ok(ToolResult::new("relaywash__Build", value)
-        .with_meta(Meta::new(["Bash:build".to_string()], 1).with_baseline(baseline)))
+    super::ok_with_meta("relaywash__Build", "Bash:build", value, Some(baseline))
 }
 
 fn detect_builder(cwd: &Path) -> String {
@@ -247,7 +269,13 @@ fn parse_go_errors(raw: &str) -> Vec<BuildError> {
         .collect()
 }
 
-fn cap_to_err(cap: &regex::Captures, file: usize, line: usize, col: usize, msg: usize) -> BuildError {
+fn cap_to_err(
+    cap: &regex::Captures,
+    file: usize,
+    line: usize,
+    col: usize,
+    msg: usize,
+) -> BuildError {
     BuildError {
         file: cap[file].into(),
         line: cap[line].parse().unwrap_or(0),
@@ -260,22 +288,6 @@ fn tail_lines_of(raw: &str, n: usize) -> String {
     let lines: Vec<&str> = raw.split('\n').collect();
     let start = lines.len().saturating_sub(n);
     lines[start..].join("\n")
-}
-
-pub(crate) fn log_dir() -> PathBuf {
-    std::env::temp_dir().join("relaywash-logs")
-}
-
-pub(crate) fn write_log(prefix: &str, body: &str) -> std::io::Result<PathBuf> {
-    let dir = log_dir();
-    std::fs::create_dir_all(&dir)?;
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let path = dir.join(format!("{prefix}-{ts}.log"));
-    std::fs::write(&path, body)?;
-    Ok(path)
 }
 
 #[cfg(test)]
@@ -305,7 +317,8 @@ mod tests {
 
     #[test]
     fn parses_cargo_errors() {
-        let raw = "error[E0425]: cannot find value `x` in this scope\n  --> src/main.rs:3:5\n   |\n";
+        let raw =
+            "error[E0425]: cannot find value `x` in this scope\n  --> src/main.rs:3:5\n   |\n";
         let errs = parse_cargo_errors(raw);
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].file, "src/main.rs");
@@ -340,7 +353,10 @@ mod tests {
 
     #[test]
     fn tail_lines_returns_last_n() {
-        let raw = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let raw = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let t = tail_lines_of(&raw, 3);
         assert_eq!(t, "line 8\nline 9\nline 10");
     }

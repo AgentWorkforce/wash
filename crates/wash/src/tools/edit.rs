@@ -6,7 +6,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::Path;
 
-use crate::ast::{parses_cleanly};
+use crate::ast::parses_cleanly;
 use crate::fuzzy::fuzzy_find_all;
 use crate::language::Language;
 use crate::mcp::{Tool, ToolResult};

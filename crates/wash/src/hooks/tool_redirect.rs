@@ -17,17 +17,11 @@ struct Pattern {
 /// Single source of truth: each row pairs a regex source with its hint.
 /// Adding a row is one line, and misalignment is no longer expressible.
 const PATTERNS: &[(&str, &str)] = &[
-    (
-        r"^(?:cat|bat|head|tail|less|more)\s+\S",
-        "relaywash__Read",
-    ),
+    (r"^(?:cat|bat|head|tail|less|more)\s+\S", "relaywash__Read"),
     (r"^grep\b", "relaywash__Search"),
     (r"^rg\b", "relaywash__Search"),
     (r"^find\s+\S", "relaywash__Search"),
-    (
-        r"^git\s+(?:status|diff|log|show)\b",
-        "relaywash__GitState",
-    ),
+    (r"^git\s+(?:status|diff|log|show)\b", "relaywash__GitState"),
     (
         r"^(?:pnpm|npm|yarn)\s+(?:run\s+)?test\b",
         "relaywash__TestRun",
@@ -62,9 +56,7 @@ fn patterns() -> &'static [Pattern] {
 }
 
 pub fn run(payload: &Value, out: &mut impl Write) -> Result<()> {
-    let cmd = payload
-        .get("tool_input")
-        .or_else(|| payload.get("toolInput"))
+    let cmd = super::payload_field(payload, "tool_input", "toolInput")
         .and_then(|v| v.get("command"))
         .and_then(|v| v.as_str())
         .unwrap_or("")

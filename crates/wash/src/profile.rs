@@ -281,7 +281,11 @@ mod tests {
     fn load_from_existing_file() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("p.json");
-        std::fs::write(&path, r#"{"version":1,"tools":{"read":{"smallFileLines":300}}}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"version":1,"tools":{"read":{"smallFileLines":300}}}"#,
+        )
+        .unwrap();
         let p = load_from(&path).unwrap();
         assert_eq!(p.tools.read.small_file_lines, Some(300));
     }
