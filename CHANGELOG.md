@@ -37,6 +37,9 @@ lockstep and do not carry separate narrative changelogs.
 
 ### Fixed
 
+- `relaywash__Edit` can now create files: pass an edit with empty `oldText`
+  and the full contents as `newText`. The `Write` redirect message explains
+  the recipe.
 - `relaywash__Build`, `relaywash__TestRun`, `relaywash__GitState`, and
   `relaywash__GhPR` subprocesses are now killed after a per-tool timeout (15m
   builds/tests, 60s git, 120s gh) instead of hanging the single-threaded MCP
