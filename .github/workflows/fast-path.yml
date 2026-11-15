@@ -5,7 +5,8 @@
 # It runs the same checks as ci.yml (cargo fmt, release build + tests,
 # launcher smoke, package layout), builds the wash binary for the five
 # release.yml targets, and packs the five @relaywash/wash-* platform packages
-# plus the relaywash wrapper at <version>-fast.<sha7>. The binaries and npm
+# plus the relaywash wrapper at <version>-fast.<sha7> (g<sha7> if the
+# short SHA is all digits). The binaries and npm
 # tarballs are uploaded as workflow artifacts; nothing is published to npm
 # (the packages have no published versions yet, so a first publish from here
 # would become `latest`), and no tag or GitHub Release is created.
@@ -210,6 +211,6 @@ jobs:
             echo "- version: \`$VERSION\` (not published to npm)"
             echo "- npm tarballs artifact: \`wash-npm-fast-$SHA\`"
             for f in fast-tarballs/*.tgz; do echo "  - \`$(basename "$f")\`"; done
-            echo "- install: download the artifact, then run \`npm install ./*.tgz\` in its directory (the packages pin each other's unpublished fast version, so install them together)"
+            echo "- install: download the artifact, then run \`npm install ./relaywash-[0-9]*.tgz ./relaywash-wash-<platform>-<arch>-*.tgz\` with the tarball for your platform (the wrapper pins the unpublished fast platform packages)"
             echo "- binary artifacts: \`wash-<platform>-<arch>-fast-$SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
