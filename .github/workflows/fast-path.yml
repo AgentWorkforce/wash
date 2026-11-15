@@ -1,0 +1,210 @@
+# Fast path: check, build and package wash on Blacksmith runners, outside the
+# shared GitHub-hosted queue. Anyone with write access (people or agents) may
+# start it; nothing runs until Khaliq approves the fast-path environment.
+#
+# It runs the same checks as ci.yml (cargo fmt, release build + tests,
+# launcher smoke, package layout), builds the wash binary for the five
+# release.yml targets, and packs the five @relaywash/wash-* platform packages
+# plus the relaywash wrapper at <version>-fast.<sha7>. The binaries and npm
+# tarballs are uploaded as workflow artifacts; nothing is published to npm
+# (the packages have no published versions yet, so a first publish from here
+# would become `latest`), and no tag or GitHub Release is created.
+name: fast-path
+run-name: fast-path ${{ inputs.ref }} (${{ inputs.reason }})
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to check (a PR branch is fine)
+        required: true
+        default: main
+      reason:
+        description: Why this needs the fast path
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: fast-path-${{ inputs.ref }}
+  cancel-in-progress: false
+jobs:
+  check:
+    environment: fast-path
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo build
+        run: cargo build --release
+      - name: cargo test
+        run: cargo test --release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: launcher resolves binary
+        run: |
+          node bin/wash.mjs --version
+          node bin/wash.mjs mcp <<< ''
+      - name: validate package layout
+        run: |
+          node -e "const p=require('./package.json');if(!p.bin?.wash)throw new Error('missing bin.wash');if(!p.optionalDependencies)throw new Error('missing optionalDependencies');console.log('wrapper ok')"
+          for d in packages/wash-*; do
+            node -e "const p=require('./$d/package.json');if(!p.os||!p.cpu)throw new Error('${d}: missing os/cpu');console.log('${d}: ok')"
+          done
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: blacksmith-6vcpu-macos-15
+            platform: darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            os: blacksmith-6vcpu-macos-15
+            platform: darwin
+            arch: x64
+          - target: x86_64-unknown-linux-gnu
+            os: blacksmith-4vcpu-ubuntu-2404
+            platform: linux
+            arch: x64
+          - target: aarch64-unknown-linux-gnu
+            os: blacksmith-4vcpu-ubuntu-2404
+            platform: linux
+            arch: arm64
+            cross: true
+          - target: x86_64-pc-windows-msvc
+            os: blacksmith-4vcpu-windows-2025
+            platform: win32
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      # The pinned toolchain (rust-toolchain.toml) with the target added, so
+      # the toolchain file and the installed target agree.
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install cross
+        if: matrix.cross == true
+        run: cargo install cross --locked
+      - name: build
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          CROSS: ${{ matrix.cross }}
+        run: |
+          if [ "$CROSS" = "true" ]; then
+            cross build --release --target "$TARGET" -p wash
+          else
+            cargo build --release --target "$TARGET" -p wash
+          fi
+      - name: stage binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          WASH_TARGET_PLATFORM: ${{ matrix.platform }}
+          WASH_TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          if [ "$WASH_TARGET_PLATFORM" = "win32" ]; then
+            export WASH_BIN_PATH="target/$TARGET/release/wash.exe"
+          else
+            export WASH_BIN_PATH="target/$TARGET/release/wash"
+          fi
+          node scripts/copy-binary.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wash-${{ matrix.platform }}-${{ matrix.arch }}-fast-${{ needs.check.outputs.sha }}
+          path: packages/wash-${{ matrix.platform }}-${{ matrix.arch }}/bin/
+          if-no-files-found: error
+
+  pack:
+    needs: [check, build]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: wash-*-fast-${{ needs.check.outputs.sha }}
+      - name: place binaries
+        env:
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          for d in artifacts/wash-*; do
+            name=$(basename "$d")
+            name="${name%-fast-"$SHA"}"
+            mkdir -p "packages/$name/bin"
+            cp -r "$d"/* "packages/$name/bin/"
+            chmod +x "packages/$name/bin/"* || true
+          done
+          ls -la packages/wash-*/bin/
+      - name: set the fast version
+        id: version
+        env:
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          base=$(node -p "require('./package.json').version")
+          v="${base%%-*}-fast.${SHA:0:7}"
+          for pkg in packages/wash-*/package.json package.json; do
+            tmp=$(mktemp)
+            jq --arg v "$v" '.version = $v
+              | (.optionalDependencies |= (if . then with_entries(.value = $v) else . end))' \
+              "$pkg" > "$tmp" && mv "$tmp" "$pkg"
+          done
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: pack
+        run: |
+          mkdir -p fast-tarballs
+          for d in packages/wash-*; do
+            (cd "$d" && npm pack --ignore-scripts --pack-destination "$GITHUB_WORKSPACE/fast-tarballs")
+          done
+          npm pack --ignore-scripts --pack-destination fast-tarballs
+          ls -l fast-tarballs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wash-npm-fast-${{ needs.check.outputs.sha }}
+          path: fast-tarballs/*.tgz
+          if-no-files-found: error
+      - name: Summary
+        env:
+          REF: ${{ inputs.ref }}
+          SHA: ${{ needs.check.outputs.sha }}
+          REASON: ${{ inputs.reason }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "### wash fast path"
+            echo "- ref: \`$REF\` at \`$SHA\`"
+            echo "- reason: $REASON"
+            echo "- version: \`$VERSION\` (not published to npm)"
+            echo "- npm tarballs artifact: \`wash-npm-fast-$SHA\`"
+            for f in fast-tarballs/*.tgz; do echo "  - \`$(basename "$f")\`"; done
+            echo "- binary artifacts: \`wash-<platform>-<arch>-fast-$SHA\`"
+          } >> "$GITHUB_STEP_SUMMARY"
