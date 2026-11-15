@@ -24,8 +24,10 @@ on:
         required: true
 permissions:
   contents: read
+# run_id keeps each dispatch in its own group: a ref-keyed group would let
+# a later dispatch cancel one that is still waiting for approval.
 concurrency:
-  group: fast-path-${{ inputs.ref }}
+  group: fast-path-${{ inputs.ref }}-${{ github.run_id }}
   cancel-in-progress: false
 jobs:
   check:
@@ -42,7 +44,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt
+      # Restore only: unreviewed refs must not save into CI's cache.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
       - name: cargo fmt --check
         run: cargo fmt --all --check
       - name: cargo build
@@ -104,6 +109,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          save-if: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
