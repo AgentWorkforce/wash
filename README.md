@@ -1,6 +1,7 @@
+Relaywash reduces noisy tool output in coding-agent sessions, helping agents find relevant code while spending fewer tokens.
+
 ![relaywash](wash-readme-banner.png)
 
-**Clean agent tool output. Lower token burn.**
 
 A Claude Code plugin that replaces the harness's built-in file and shell tools with structured
 equivalents that return only what the model needs. The default `Read`/`Edit`/`Write`/`Grep`/
